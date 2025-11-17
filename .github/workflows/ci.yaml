@@ -1,0 +1,40 @@
+name: Continuous Integration
+
+on:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
+    workflow_call:
+    pull_request:
+
+jobs:
+    ci:
+        name: CI
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                shell: bash
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v6
+              with:
+                  node-version: latest
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Formatting
+              run: npm run format:check
+
+            - name: License check
+              run: npx lice src -a
+
+            - name: Linting
+              run: npm run lint
+
+            - name: Build
+              run: npm run build
