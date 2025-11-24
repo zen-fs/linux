@@ -1,7 +1,10 @@
 import { dirname } from '@zenfs/core/path.js';
 import { withErrno } from 'kerium';
 
-const root = new Map<string, KObject>();
+/**
+ * @internal
+ */
+export const sysfs_root = new Map<string, KObject>();
 
 /**
  * Unlike Linux, we don't use ksets, ktypes, or attribute groups.
@@ -19,7 +22,7 @@ export class KObject {
 		public parent: KObject | null
 	) {
 		if (!parent) {
-			root.set(name, this);
+			sysfs_root.set(name, this);
 		} else {
 			parent.children.set(name, this);
 		}
@@ -41,7 +44,7 @@ export interface KObjectAttribute extends Attribute {
 
 export function kobj_find(path: string): KObject | Attribute | null {
 	const [group, ...parts] = path.split('/').filter(p => p);
-	let current: KObject | Attribute | undefined = root.get(group);
+	let current: KObject | Attribute | undefined = sysfs_root.get(group);
 	for (const part of parts) {
 		if (!(current instanceof KObject)) throw withErrno('ENOTDIR');
 		if (!current.children.has(part)) throw withErrno('ENOENT');
