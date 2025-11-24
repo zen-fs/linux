@@ -5,3 +5,10 @@ docs
 tmp
 tests/.coverage
 .tmp.*
+.*
+!.vscode
+!.github
+!.gitattributes
+!.gitignore
+!.prettierignore
+!.prettierrc
