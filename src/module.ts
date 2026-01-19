@@ -34,7 +34,7 @@ class ModuleKObject extends KObject {
 }
 
 interface Module {
-	state: 'live' | 'coming' | 'going' | 'unformed';
+	state: 'live' | 'init' | 'exit' | 'unformed';
 	name: string;
 	kobject: ModuleKObject;
 }
