@@ -2,7 +2,7 @@
 import type { DeviceAttribute } from '../../device.js';
 import type { Attribute } from '../../kobject.js';
 
-export interface ClassAttribute extends Attribute<[Class]> {}
+export interface ClassAttribute extends Attribute {}
 
 export interface Class {
 	readonly name: string;

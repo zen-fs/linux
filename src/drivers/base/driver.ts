@@ -4,7 +4,7 @@ import type { BusType } from './bus.js';
 import type { Module } from '../../module.js';
 import type { Device, DeviceAttribute } from '../../device.js';
 
-export interface DriverAttribute extends Attribute<[DeviceDriver]> {}
+export interface DriverAttribute extends Attribute {}
 
 export interface DeviceDriver<TDevice extends Device = Device> {
 	readonly name: string;

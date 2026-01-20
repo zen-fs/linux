@@ -6,7 +6,7 @@ import { S_IWUSR } from '@zenfs/core/constants';
 
 const kobj_bus = new KObject('bus', null);
 
-export interface BusAttribute<TBus extends BusType = BusType> extends Attribute<[TBus]> {}
+export interface BusAttribute extends Attribute {}
 
 export class BusType<TDevice extends Device = Device, TDriver extends DeviceDriver<TDevice> = DeviceDriver<TDevice>> extends KObject {
 	dev_name?: string;
@@ -22,7 +22,7 @@ export class BusType<TDevice extends Device = Device, TDriver extends DeviceDriv
 
 		this.children.set('uevent', {
 			mode: S_IWUSR,
-			store(bus: BusType<TDevice, TDriver>, value: string) {},
+			store(value: string) {},
 		} satisfies BusAttribute);
 	}
 

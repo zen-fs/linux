@@ -45,16 +45,16 @@ export class KObject {
 	store?(attr: Attribute, value: string): void;
 }
 
-export interface Attribute<Args extends any[] = any[]> {
+export interface Attribute {
 	/** @default 0o444 */
 	mode: number;
-	show?(...args: Args): string;
-	store?(...args: [...Args, value: string]): void;
+	show?(): string;
+	store?(value: string): void;
 }
 
-export interface KObjectAttribute extends Attribute<[KObject]> {}
+export interface KObjectAttribute extends Attribute {}
 
-export function kobj_find(path: string): KObject | Attribute | null {
+export function find_kobj_or_attr(path: string): KObject | Attribute | null {
 	const [top_level, ...parts] = path.split('/').filter(p => p);
 	let current: KObject | Attribute | undefined = sysfs_root.get(top_level);
 	for (const part of parts) {
@@ -68,7 +68,7 @@ export function kobj_find(path: string): KObject | Attribute | null {
 }
 
 export function kobj_create(path: string): KObject {
-	const parent = kobj_find(dirname(path));
+	const parent = find_kobj_or_attr(dirname(path));
 	if (!parent) throw withErrno('ENOENT');
 	if (!(parent instanceof KObject)) throw withErrno('ENOTDIR');
 
@@ -81,16 +81,16 @@ export function kobj_create(path: string): KObject {
 export function kobj_create_attribute(
 	parent: KObject,
 	name: string,
-	show: KObjectAttribute['show'],
-	store: KObjectAttribute['store'],
+	show: (kobj: KObject) => string,
+	store: (kobj: KObject, value: string) => void,
 	mode: number = 0o444
 ): void {
 	if (parent.children.has(name)) throw withErrno('EEXIST');
 	parent.children.set(name, {
 		mode,
-		show,
-		store,
-	} as KObjectAttribute);
+		show: show?.bind(null, parent),
+		store: store?.bind(null, parent),
+	});
 }
 
 export function kobj_init() {

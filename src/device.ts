@@ -7,7 +7,7 @@ import type { Attribute } from './kobject.js';
 import { KObject } from './kobject.js';
 import type { DevicePowerInfo } from './power.js';
 
-export interface DeviceAttribute extends Attribute<[Device]> {}
+export interface DeviceAttribute extends Attribute {}
 
 export interface SubsystemInterface {
 	readonly name: string;
