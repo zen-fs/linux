@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import { DevTmpFS } from './fs/devtmpfs.js';
 import { ProcFS } from './fs/procfs.js';
 import { SysFS } from './fs/sysfs.js';

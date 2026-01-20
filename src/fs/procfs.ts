@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import { boundContexts, FileSystem, Sync } from '@zenfs/core';
 import type { InodeLike } from '@zenfs/core';
 import { withErrno } from 'kerium';

@@ -1,5 +1,19 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
 import { kobj_create_attribute, KObject } from './kobject.js';
+
+export interface DevicePowerInfo {
+	can_wakeup: boolean;
+	async_suspend: boolean;
+	in_dpm_list: boolean;
+	is_prepared: boolean;
+	is_suspended: boolean;
+	is_noirq_suspended: boolean;
+	is_late_suspended: boolean;
+	no_pm: boolean;
+	early_init: boolean;
+	direct_complete: boolean;
+}
 
 const power_kobj = new KObject('power', null);
 

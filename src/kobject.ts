@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import { dirname } from '@zenfs/core/path.js';
 import { withErrno } from 'kerium';
 
@@ -19,7 +20,7 @@ export class KObject {
 
 	constructor(
 		public name: string,
-		public parent: KObject | null
+		public parent?: KObject | null
 	) {
 		if (!parent) {
 			sysfs_root.set(name, this);
@@ -28,23 +29,34 @@ export class KObject {
 		}
 	}
 
+	dispose() {
+		if (!this.parent) {
+			sysfs_root.delete(this.name);
+		} else {
+			this.parent.children.delete(this.name);
+		}
+	}
+
+	[Symbol.dispose]() {
+		this.dispose();
+	}
+
 	show?(attr: Attribute): string;
 	store?(attr: Attribute, value: string): void;
 }
 
-export interface Attribute {
+export interface Attribute<Args extends any[] = any[]> {
 	/** @default 0o444 */
 	mode: number;
+	show?(...args: Args): string;
+	store?(...args: [...Args, value: string]): void;
 }
 
-export interface KObjectAttribute extends Attribute {
-	show(kobj: KObject): string;
-	store(kobj: KObject, value: string): void;
-}
+export interface KObjectAttribute extends Attribute<[KObject]> {}
 
 export function kobj_find(path: string): KObject | Attribute | null {
-	const [group, ...parts] = path.split('/').filter(p => p);
-	let current: KObject | Attribute | undefined = sysfs_root.get(group);
+	const [top_level, ...parts] = path.split('/').filter(p => p);
+	let current: KObject | Attribute | undefined = sysfs_root.get(top_level);
 	for (const part of parts) {
 		if (!(current instanceof KObject)) throw withErrno('ENOTDIR');
 		if (!current.children.has(part)) throw withErrno('ENOENT');
@@ -83,7 +95,6 @@ export function kobj_create_attribute(
 
 export function kobj_init() {
 	new KObject('block', null);
-	new KObject('bus', null);
 	new KObject('class', null);
 
 	new KObject('drivers', null);

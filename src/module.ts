@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 import { KObject } from './kobject.js';
 
 type StringLike = { toString(): string };
@@ -33,7 +34,7 @@ class ModuleKObject extends KObject {
 	}
 }
 
-interface Module {
+export interface Module {
 	state: 'live' | 'init' | 'exit' | 'unformed';
 	name: string;
 	kobject: ModuleKObject;
