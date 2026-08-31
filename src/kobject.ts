@@ -97,10 +97,10 @@ export class KObject {
 	 * Send a uevent described by `text`, an action optionally followed by `KEY=VALUE` pairs.
 	 * This is what writing to a `uevent` attribute does.
 	 */
-	create_uevent(text: string): void {
-		const [action, ...vars] = text.trim().split(/\s+/);
+	send_uevent(text: string): void {
+		const [action, ...vars] = text.trim().split(/\s+/) as [UEventAction, ...string[]];
 
-		if (!uevent_actions.includes(action as UEventAction)) throw withErrno('EINVAL');
+		if (!uevent_actions.includes(action)) throw withErrno('EINVAL');
 
 		const env: UEventEnv = {};
 		for (const pair of vars) {
@@ -109,14 +109,14 @@ export class KObject {
 			env[pair.slice(0, i)] = pair.slice(i + 1);
 		}
 
-		this.notify_uevent(action as UEventAction, env);
+		this.notify_uevent(action, env);
 	}
 
 	add_uevent_attr() {
 		this.children.set('uevent', {
 			name: 'uevent',
 			mode: S_IWUSR,
-			store: value => this.create_uevent(value),
+			store: value => this.send_uevent(value),
 		} satisfies Attribute);
 	}
 
