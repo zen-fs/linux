@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { InodeLike } from '@zenfs/core';
 import { FileSystem, Inode, Sync } from '@zenfs/core';
-import { S_IFDIR, S_IFREG } from '@zenfs/core/constants';
+import { S_IFDIR, S_IFLNK, S_IFREG } from '@zenfs/core/constants';
 import { withErrno } from 'kerium';
-import { find_kobj_or_attr, KObject, sysfs_root, type Attribute } from '../kobject.js';
+import type { KEntry } from '../kobject.js';
+import { KLink, KObject, sysfs_lookup } from '../kobject.js';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 /**
- * @todo
+ * The contents of an entry, or `null` when it doesn't have any (i.e. it is a directory).
  */
+function contents_of(entry: KEntry): string | null {
+	if (entry instanceof KObject) return null;
+	if (entry instanceof KLink) return entry.contents;
+	return entry.show?.() ?? '';
+}
+
 export class SysFS extends Sync(FileSystem) {
 	protected readonly initTime = Date.now();
 
-	protected readonly _rootInode = new Inode({ mode: S_IFDIR | 0o555 });
-
 	protected _nextIno = 1;
 
-	protected _inodes = new Map<string, Inode>([['/', this._rootInode]]);
+	protected _inodes = new Map<string, Inode>();
 
 	public constructor() {
 		super(0x62656572, 'sysfs');
@@ -28,48 +33,42 @@ export class SysFS extends Sync(FileSystem) {
 		throw withErrno('EPERM');
 	}
 
-	private _getInode(path: string, obj: KObject | Attribute): Inode {
-		const is_kobj = obj instanceof KObject;
+	protected _lookup(path: string): KEntry {
+		const entry = sysfs_lookup(path);
+		if (!entry) throw withErrno('ENOENT');
+		return entry;
+	}
+
+	private _getInode(path: string, obj: KEntry): Inode {
 		let inode = this._inodes.get(path);
 		if (inode) return inode;
-		inode = new Inode();
-		inode.ino = this._nextIno++;
-		inode.mode = is_kobj ? S_IFDIR | 0o555 : S_IFREG | obj.mode;
-		if (is_kobj) inode.size = 4096;
+
+		inode = new Inode({
+			ino: this._nextIno++,
+			data: this._nextIno++,
+			atimeMs: this.initTime,
+			mtimeMs: this.initTime,
+			ctimeMs: this.initTime,
+			birthtimeMs: this.initTime,
+			size: 4096,
+			mode: obj instanceof KObject ? S_IFDIR | 0o555 : obj instanceof KLink ? S_IFLNK | 0o777 : S_IFREG | obj.mode,
+		});
+
 		this._inodes.set(path, inode);
 		return inode;
 	}
 
-	/**
-	 * @todo
-	 */
 	statSync(path: string): InodeLike {
-		if (path === '/') return this._rootInode;
-		const node = find_kobj_or_attr(path);
-		if (!node) throw withErrno('ENOENT');
-		const is_kobj = node instanceof KObject;
-
+		const node = this._lookup(path);
 		const inode = this._getInode(path, node);
-
-		if (!is_kobj && node.show) {
-			inode.size = encoder.encode(node?.show?.() || '').byteLength;
-		}
+		const contents = contents_of(node);
+		if (contents !== null) inode.size = encoder.encode(contents).byteLength;
 
 		return inode;
 	}
 
-	/**
-	 * @todo
-	 */
 	touchSync(path: string, metadata: Partial<InodeLike>): void {
-		if (path === '/') {
-			this._rootInode.update(metadata);
-			return;
-		}
-		const node = find_kobj_or_attr(path);
-		if (!node) throw withErrno('ENOENT');
-		const inode = this._getInode(path, node);
-		inode.update(metadata);
+		this._getInode(path, this._lookup(path)).update(metadata);
 	}
 
 	createFileSync(): InodeLike {
@@ -89,10 +88,9 @@ export class SysFS extends Sync(FileSystem) {
 	}
 
 	readdirSync(path: string): string[] {
-		if (path === '/') return Array.from(sysfs_root.keys());
-		const obj = find_kobj_or_attr(path);
+		const obj = this._lookup(path);
 		if (!(obj instanceof KObject)) throw withErrno('ENOTDIR');
-		return [...obj.children.keys(), ...obj.attributes.keys()];
+		return Array.from(obj.keys());
 	}
 
 	linkSync(): void {
@@ -103,27 +101,23 @@ export class SysFS extends Sync(FileSystem) {
 		return;
 	}
 
-	/**
-	 * @todo
-	 */
 	readSync(path: string, buffer: Uint8Array, start: number, end: number): void {
-		if (path === '/') throw withErrno('EISDIR');
-		const node = find_kobj_or_attr(path);
-		if (!node) throw withErrno('ENOENT');
+		const node = this._lookup(path);
 		if (node instanceof KObject) throw withErrno('EISDIR');
-		if (!node.show) throw withErrno('EIO');
-		encoder.encodeInto(node.show(), buffer.subarray(start, end));
+		if (!(node instanceof KLink) && !node.show) throw withErrno('EIO');
+
+		const data = encoder.encode(contents_of(node)!).subarray(start, end);
+		buffer.set(data.subarray(0, buffer.byteLength));
 	}
 
-	/**
-	 * @todo
-	 */
 	writeSync(path: string, buffer: Uint8Array, offset: number): void {
-		if (path === '/') throw withErrno('EISDIR');
-		const node = find_kobj_or_attr(path);
-		if (!node) throw withErrno('ENOENT');
+		const node = this._lookup(path);
 		if (node instanceof KObject) throw withErrno('EISDIR');
+		if (node instanceof KLink) throw withErrno('EPERM');
 		if (!node.store) throw withErrno('EIO');
-		node.store(decoder.decode(buffer.subarray(offset)));
+
+		if (offset) throw withErrno('EINVAL');
+
+		node.store(decoder.decode(buffer));
 	}
 }

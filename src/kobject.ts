@@ -57,8 +57,8 @@ export class KObject {
 	/**
 	 * The names of everything in this kobject.
 	 */
-	entries(): string[] {
-		return [...new Set([...this.children.keys(), ...this.attributes.keys()])];
+	keys(): Iterable<string> {
+		return new Set([...this.children.keys(), ...this.attributes.keys()]);
 	}
 
 	dispose() {
