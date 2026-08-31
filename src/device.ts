@@ -42,7 +42,7 @@ export class Device extends KObject {
 	removable?: 'unknown' | 'removable' | 'fixed';
 
 	constructor(init: DeviceInit) {
-		if (init.bus?.dev_name && init.id) init.name ||= init.bus.dev_name + init.id;
+		if (init.bus?.dev_name && init.id !== undefined) init.name ||= init.bus.dev_name + init.id;
 
 		if (!init.name) throw withErrno('EINVAL');
 
