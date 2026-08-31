@@ -1,70 +1,186 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
+import { pick } from 'utilium';
 import type { Device, DeviceAttribute } from '../../device.js';
 import type { Attribute } from '../../kobject.js';
-import { KObject } from '../../kobject.js';
-import type { Module } from '../../module.js';
+import { KObject, sysfs_create_link, sysfs_remove_link } from '../../kobject.js';
+import { find_module, type Module } from '../../module.js';
 import type { BusType } from './bus.js';
-import { module_add_driver, module_remove_driver } from './module.js';
 
 export interface DriverAttribute extends Attribute {}
 
-export interface DeviceDriver<TDevice extends Device = Device> {
-	readonly name: string;
-	readonly bus: BusType;
+export interface DeviceDriverInit<TDevice extends Device = Device> {
+	name: string;
+	bus: BusType;
 
 	/** The module this driver is part of. Built-in drivers don't have one. */
 	owner?: Module;
 	/** Used for built-in modules */
-	readonly mod_name?: string;
+	mod_name?: string;
 
-	/**
-	 * `/sys/bus/<bus>/drivers/<name>`, set by `driver_register`.
-	 * @internal
-	 */
-	kobject?: KObject;
-
+	/** Don't add the `bind` and `unbind` attributes */
 	disableSysfsBind?: boolean;
 
-	readonly attrs: Record<string, DriverAttribute>;
-	readonly dev_attrs: Record<string, DeviceAttribute>;
+	attrs?: Record<string, DriverAttribute>;
+	dev_attrs?: Record<string, DeviceAttribute>;
+
+	probe?: (device: TDevice) => boolean;
+
+	remove?: (device: TDevice) => void;
+	shutdown?: (device: TDevice) => void;
+
+	suspend?: (device: TDevice) => void;
+	resume?: (device: TDevice) => void;
+}
+
+export class DeviceDriver<TDevice extends Device = Device> {
+	public readonly name!: string;
+	public readonly bus!: BusType;
+
+	/** The module this driver is part of. Built-in drivers don't have one. */
+	public owner?: Module;
+	/** Used for built-in modules */
+	public readonly mod_name?: string;
+
+	/**
+	 * `/sys/bus/<bus>/drivers/<name>`, set by `register`.
+	 * @internal
+	 */
+	public kobject?: KObject;
+
+	/** Don't add the `bind` and `unbind` attributes */
+	public disableSysfsBind?: boolean;
+
+	public readonly attrs: Record<string, DriverAttribute>;
+	public readonly dev_attrs: Record<string, DeviceAttribute>;
+
+	constructor(init: DeviceDriverInit<TDevice>) {
+		if (!init.name || !init.bus) throw withErrno('EINVAL');
+
+		Object.assign(this, pick(init, 'name', 'bus', 'owner', 'mod_name', 'disableSysfsBind'));
+
+		this.attrs = init.attrs ?? {};
+		this.dev_attrs = init.dev_attrs ?? {};
+
+		if (init.probe) this.probe = init.probe;
+		if (init.remove) this.remove = init.remove;
+		if (init.shutdown) this.shutdown = init.shutdown;
+		if (init.suspend) this.suspend = init.suspend;
+		if (init.resume) this.resume = init.resume;
+	}
 
 	probe?(device: TDevice): boolean;
 
 	remove?(device: TDevice): void;
-	shutdown?(dev: TDevice): void;
+	shutdown?(device: TDevice): void;
 
 	suspend?(device: TDevice): void;
 	resume?(device: TDevice): void;
 
 	/** @todo pm? */
-}
 
-/**
- * Add a driver to its bus, creating `/sys/bus/<bus>/drivers/<name>`.
- * @throws EEXIST if a driver with the same name is already registered on the bus
- */
-export function driver_register(drv: DeviceDriver): void {
-	if (drv.kobject) throw withErrno('EEXIST');
+	/**
+	 * Whether this driver can handle `device`, according to the bus they share.
+	 * A bus without a `match` accepts every device on it, like Linux.
+	 */
+	matches(device: Device): boolean {
+		if (!device.bus || device.bus !== this.bus) return false;
+		return this.bus.match ? this.bus.match(device, this) : true;
+	}
 
-	const drivers = drv.bus.children.get('drivers');
-	if (!(drivers instanceof KObject)) throw withErrno('ENODEV');
-	if (drivers.lookup(drv.name)) throw withErrno('EEXIST');
+	/**
+	 * The name this driver is linked as in `/sys/module/<module>/drivers`.
+	 */
+	protected get link_name(): string {
+		return this.bus.name + ':' + this.name;
+	}
 
-	const kobject = new KObject(drv.name, drivers);
-	kobject.add_uevent_attr();
+	/**
+	 * The module this driver belongs to, which is either the one it was registered with or the built-in one named by `mod_name`.
+	 */
+	protected get module(): Module | null {
+		return this.owner ?? (this.mod_name ? find_module(this.mod_name) : null);
+	}
 
-	for (const [name, attr] of Object.entries(drv.attrs)) kobject.children.set(name, { ...attr, name });
+	/**
+	 * Add the driver to its bus, creating `/sys/bus/<bus>/drivers/<name>`,
+	 * then offer it every unbound device on the bus.
+	 * @throws EEXIST if the driver is already registered, or the bus already has one by that name
+	 */
+	register(): void {
+		if (this.kobject) throw withErrno('EEXIST');
+		if (this.bus.drivers_kobj.lookup(this.name)) throw withErrno('EEXIST');
 
-	drv.kobject = kobject;
-	module_add_driver(drv);
-}
+		const kobject = new KObject(this.name, this.bus.drivers_kobj);
+		kobject.add_uevent_attr();
 
-/** Undo `driver_register` */
-export function driver_unregister(drv: DeviceDriver): void {
-	if (!drv.kobject) return;
+		for (const [name, attr] of Object.entries({ ...this.bus.drv_attrs, ...this.attrs })) kobject.children.set(name, { ...attr, name });
 
-	module_remove_driver(drv);
-	drv.kobject.dispose();
-	delete drv.kobject;
+		if (!this.disableSysfsBind) {
+			kobject.create_attribute('bind', null, (_, name) => this.bind(name));
+			kobject.create_attribute('unbind', null, (_, name) => this.unbind(name));
+		}
+
+		this.kobject = kobject;
+		this.bus.drivers.add(this);
+
+		if (this.module) {
+			// `/sys/module/<module>/drivers/<bus>:<driver>` and `/sys/bus/<bus>/drivers/<driver>/module`
+			sysfs_create_link(this.kobject, this.module.kobject, 'module');
+			sysfs_create_link(this.module.kobject.drivers, this.kobject, this.link_name);
+		}
+
+		this.attach();
+	}
+
+	/** Undo `register`, unbinding every device the driver is bound to */
+	unregister(): void {
+		if (!this.kobject) return;
+
+		for (const device of [...this.bus.devices]) {
+			if (device.driver === this) device.release_driver();
+		}
+
+		if (this.module) {
+			if (this.kobject) sysfs_remove_link(this.kobject, 'module');
+			sysfs_remove_link(this.module.kobject.drivers, this.link_name);
+		}
+
+		this.bus.drivers.delete(this);
+		this.kobject.dispose();
+		delete this.kobject;
+	}
+
+	/**
+	 * Offer every unbound device on the bus to this driver.
+	 */
+	attach(): void {
+		for (const device of this.bus.devices) {
+			if (device.driver || !this.matches(device)) continue;
+			device.try_bind(this);
+		}
+	}
+
+	/**
+	 * Bind the device named `name` to this driver. Backs the `bind` attribute.
+	 * @throws ENODEV if there is no such device on the bus, or the bus doesn't match it
+	 * @throws EBUSY if the device already has a driver
+	 */
+	bind(name: string): void {
+		const device = this.bus.find_device(name.trim());
+		if (!device) throw withErrno('ENODEV');
+		if (device.driver) throw withErrno('EBUSY');
+		if (!this.matches(device)) throw withErrno('ENODEV');
+		device.try_bind(this);
+	}
+
+	/**
+	 * Unbind the device named `name` from this driver. Backs the `unbind` attribute.
+	 * @throws ENODEV if there is no such device on the bus, or it isn't bound to this driver
+	 */
+	unbind(name: string): void {
+		const device = this.bus.find_device(name.trim());
+		if (!device || device.driver !== this) throw withErrno('ENODEV');
+		device.release_driver();
+	}
 }

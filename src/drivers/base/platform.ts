@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import type { Device } from '../../device.js';
-import type { DeviceDriver } from './driver.js';
+import { pick } from 'utilium';
+import { Device } from '../../device.js';
 import type { Resource } from '../../resources.js';
 import { BusType } from './bus.js';
+import { DeviceDriver, type DeviceDriverInit } from './driver.js';
 
-interface PlatformDeviceId {
+export interface PlatformDeviceId {
 	name: string;
 }
 
-interface PlatformDevice extends Device {
+export interface PlatformDevice extends Device {
 	driver: PlatformDriver;
 	parent: PlatformDevice | null;
 
@@ -24,7 +25,9 @@ interface PlatformDevice extends Device {
 	driver_override?: string;
 }
 
-interface PlatformDriver extends DeviceDriver<PlatformDevice> {
+export interface PlatformDriverInit extends Omit<DeviceDriverInit<PlatformDevice>, 'bus'> {
+	/** @default platform_bus_type */
+	bus?: BusType;
 	id_table?: PlatformDeviceId[];
 	prevent_deferred_probe?: boolean;
 	/*
@@ -35,6 +38,17 @@ interface PlatformDriver extends DeviceDriver<PlatformDevice> {
 	 * to setup and manage their own I/O address space.
 	 */
 	driver_managed_dma?: boolean;
+}
+
+export class PlatformDriver extends DeviceDriver<PlatformDevice> {
+	id_table?: PlatformDeviceId[];
+	prevent_deferred_probe?: boolean;
+	driver_managed_dma?: boolean;
+
+	constructor(init: PlatformDriverInit) {
+		super({ ...init, bus: init.bus ?? platform_bus_type });
+		Object.assign(this, pick(init, 'id_table', 'prevent_deferred_probe', 'driver_managed_dma'));
+	}
 }
 
 function platform_match(dev: PlatformDevice, drv: PlatformDriver): boolean {
@@ -62,9 +76,19 @@ function platform_shutdown(dev: PlatformDevice): void {
 	if (drv.shutdown) drv.shutdown(dev);
 }
 
+/** `/sys/bus/platform`, set up by `platform_bus_init` */
+export let platform_bus_type: BusType<PlatformDevice, PlatformDriver>;
+
+/** `/sys/devices/platform`, which platform devices without a parent go under */
+export let platform_bus: Device;
+
 export function platform_bus_init() {
-	const platform_bus_type = new BusType<PlatformDevice, PlatformDriver>('platform');
+	platform_bus_type = new BusType<PlatformDevice, PlatformDriver>('platform');
 	platform_bus_type.match = platform_match;
 	platform_bus_type.remove = platform_remove;
 	platform_bus_type.shutdown = platform_shutdown;
+
+	platform_bus = new Device({ name: 'platform' });
+	platform_bus.register();
+	platform_bus_type.dev_root = platform_bus;
 }
