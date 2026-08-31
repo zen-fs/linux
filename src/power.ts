@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
-import { kobj_create_attribute, KObject } from './kobject.js';
+import { KObject } from './kobject.js';
 
 export interface DevicePowerInfo {
 	can_wakeup: boolean;
@@ -19,8 +19,7 @@ const power_kobj = new KObject('power', null);
 
 let async_enabled = false;
 
-kobj_create_attribute(
-	power_kobj,
+power_kobj.create_attribute(
 	'async',
 	() => (async_enabled ? '1' : '0'),
 	(_, val) => {

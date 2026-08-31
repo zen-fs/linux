@@ -5,6 +5,11 @@ import { SysFS } from './fs/sysfs.js';
 import { ConfigFS } from './fs/configfs.js';
 import { DebugFS } from './fs/debugfs.js';
 import { configure, InMemory } from '@zenfs/core';
+import { driver_init } from './drivers/base/init.js';
+import { kobj_init } from './kobject.js';
+
+kobj_init();
+driver_init();
 
 await configure({
 	mounts: {

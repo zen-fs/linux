@@ -19,15 +19,6 @@ export function driver_init() {
 
 	new KObject('system', devices);
 
-	// classes init
-	new KObject('class', null);
-
-	// firmware init
-	new KObject('firmware', null);
-
-	// hypervisor init
-	new KObject('hypervisor', null);
-
 	platform_bus_init();
 	memory_dev_init();
 	node_dev_init();

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { Device, DeviceAttribute } from '../../device.js';
-import type { DeviceDriver, DriverAttribute } from './driver.js';
 import { KObject, type Attribute } from '../../kobject.js';
-import { S_IWUSR } from '@zenfs/core/constants';
+import type { DeviceDriver, DriverAttribute } from './driver.js';
 
 const kobj_bus = new KObject('bus', null);
 
@@ -20,10 +19,7 @@ export class BusType<TDevice extends Device = Device, TDriver extends DeviceDriv
 		new KObject('devices', this);
 		new KObject('drivers', this);
 
-		this.children.set('uevent', {
-			mode: S_IWUSR,
-			store(value: string) {},
-		} satisfies BusAttribute);
+		this.add_uevent_attr();
 	}
 
 	/**
