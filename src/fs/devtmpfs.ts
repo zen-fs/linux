@@ -1,15 +1,45 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { InodeLike } from '@zenfs/core';
 import { InMemoryStore, InodeFlags, StoreFS, isBlockDevice, isCharacterDevice } from '@zenfs/core';
-import type { Ioctl, IoctlContext } from '@zenfs/core/internal/ioctl.js';
+import type { IoctlContext } from '@zenfs/core/internal/ioctl.js';
 import { S_IFBLK, S_IFCHR } from '@zenfs/core/constants';
 import { dirname } from '@zenfs/core/path';
 import { withErrno } from 'kerium';
-import type { Device } from '../device.js';
+import type { Device, DevT } from '../device.js';
 import { is_block_dev, toDev, fromDev } from '../device.js';
 import * as block_dev from '../block_dev.js';
-import type { DeviceFile, FileOperations } from './char_dev.js';
 import * as char_dev from './char_dev.js';
+
+/**
+ * A file a device driver is operating on.
+ */
+export interface DeviceFile {
+	/** The path of the file, relative to the root of the file system it is on */
+	readonly path: string;
+	readonly inode: InodeLike;
+	/** The device number of the node, i.e. `inode.rdev` */
+	readonly devt: DevT;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type DeviceIoctl = (context: IoctlContext, file: DeviceFile, ...args: any[]) => any;
+
+/**
+ * The operations a device driver provides, like Linux's `struct file_operations`.
+ *
+ * @privateRemarks
+ * `open` and `release` are never called right now since `@zenfs/core` has no hook for opening a file.
+ * They are here so drivers can be written against the interface they may eventually get.
+ */
+export interface FileOperations {
+	open?: (file: DeviceFile) => void;
+	release?: (file: DeviceFile) => void;
+	// There is no way to report a short read, since `FileSystem.read` doesn't have one either.
+	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => void;
+	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
+	sync?: (file: DeviceFile) => void;
+	ioctl?: Record<number, DeviceIoctl>;
+}
 
 /**
  * The devtmpfs nodes are created in, like Linux's `mnt`.
@@ -163,13 +193,15 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 		file.ops.write(file, buffer, offset);
 	}
 
-	public getSyncIoctl(context: IoctlContext, command: number): Ioctl | null | undefined {
+	public ioctlSync(context: IoctlContext, command: number, ...args: unknown[]): unknown {
 		const file = this._device(context.path, context.inode);
-		return file?.ops.ioctl?.(file, command) ?? super.getSyncIoctl(context, command);
+		const op = file?.ops.ioctl?.[command];
+		return op ? op(context, file, ...args) : super.ioctlSync(context, command, ...args);
 	}
 
-	public getAsyncIoctl(context: IoctlContext, command: number): Ioctl | null | undefined {
+	public async ioctl(context: IoctlContext, command: number, ...args: unknown[]): Promise<unknown> {
 		const file = this._device(context.path, context.inode);
-		return file?.ops.ioctl?.(file, command) ?? super.getAsyncIoctl(context, command);
+		const op = file?.ops.ioctl?.[command];
+		return op ? await op(context, file, ...args) : await super.ioctl(context, command, ...args);
 	}
 }

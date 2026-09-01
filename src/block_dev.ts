@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import type { Ioctl, IoctlOps } from '@zenfs/core/internal/ioctl.js';
+import type { IoctlContext, IoctlOps } from '@zenfs/core/internal/ioctl.js';
 import { withErrno } from 'kerium';
 import type { DevNode, DevT, DeviceAttribute, DeviceType } from './device.js';
 import { Device, format_dev_t, toDev } from './device.js';
 import { Class } from './drivers/base/class.js';
-import type { DeviceFile, FileOperations } from './fs/char_dev.js';
+import type { DeviceFile, DeviceIoctl, FileOperations } from './fs/devtmpfs.js';
 import { KObject, sysfs_create_link, sysfs_remove_link } from './kobject.js';
 import type { Module } from './module.js';
 import { assignWithDefaults, pick } from 'utilium';
@@ -43,7 +43,7 @@ export enum BlkIoctl {
  * `fs.ioctlSync<BlkIoctl.GetSize64, BlockIoctlOps>('/dev/sda', BlkIoctl.GetSize64)`.
  */
 export interface BlockIoctlOps extends IoctlOps {
-	[BlkIoctl.RoSet](read_only: boolean): void;
+	[BlkIoctl.RoSet]($: IoctlContext, read_only: boolean): void;
 	[BlkIoctl.RoGet](): boolean;
 	[BlkIoctl.GetSize](): number;
 	[BlkIoctl.SSzGet](): number;
@@ -115,8 +115,7 @@ export interface BlockDeviceOperations {
 	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
 	sync?: (file: DeviceFile) => void;
 	dev_node?: (disk: GenDisk) => DevNode | undefined;
-	/** Analogous to `block_device_operations.ioctl` */
-	ioctl?: (file: DeviceFile, command: number) => Ioctl | undefined;
+	ioctl?: Record<number, DeviceIoctl>;
 }
 
 /** `/sys/block`, which holds a link to every whole disk. Partitions are only in `/sys/class/block`. */
@@ -258,25 +257,18 @@ export class BlockDevice {
 			write(file, data, this.start * sectorSize + offset);
 		},
 
-		ioctl: (file, command: BlkIoctl) => {
-			switch (command) {
-				case BlkIoctl.RoSet:
-					return (read_only: boolean): void => {
-						this.read_only = read_only;
-					};
-				case BlkIoctl.RoGet:
-					return (): boolean => this.read_only;
-				case BlkIoctl.GetSize:
-					return (): number => this.nr_sectors;
-				case BlkIoctl.GetSize64:
-					return (): number => this.nr_sectors * sectorSize;
-				case BlkIoctl.SSzGet:
-				case BlkIoctl.BSzGet:
-				case BlkIoctl.PbSzGet:
-					return (): number => sectorSize;
-				default:
-					return this.disk.ops.ioctl?.(file, command);
-			}
+		ioctl: {
+			...this.disk.ops.ioctl,
+
+			[BlkIoctl.RoSet]: ($, file, read_only: boolean): void => {
+				this.read_only = read_only;
+			},
+			[BlkIoctl.RoGet]: (): boolean => this.read_only,
+			[BlkIoctl.GetSize]: (): number => this.nr_sectors,
+			[BlkIoctl.GetSize64]: (): number => this.nr_sectors * sectorSize,
+			[BlkIoctl.SSzGet]: (): number => sectorSize,
+			[BlkIoctl.BSzGet]: (): number => sectorSize,
+			[BlkIoctl.PbSzGet]: (): number => sectorSize,
 		},
 	};
 

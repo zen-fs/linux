@@ -1,48 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import type { InodeLike } from '@zenfs/core';
-import type { Ioctl } from '@zenfs/core/internal/ioctl.js';
 import { withErrno } from 'kerium';
 import type { DevT } from '../device.js';
 import { format_dev_t, minorMask } from '../device.js';
 import type { Module } from '../module.js';
+import type { FileOperations } from './devtmpfs.js';
 
 export const charDevMajorMax = 512;
 
 const charDevMajorDynEnd = 234,
 	charDevMajorDynExtStart = 511,
 	charDevMajorDynExtEnd = 384;
-
-/**
- * A file a device driver is operating on.
- *
- * This stands in for Linux's `struct file` and `struct inode`.
- * Since `@zenfs/core` has no hook for opening a file, one of these does not (yet) exist per open; it is created for each operation instead.
- * Drivers should treat it as if it were per-open.
- */
-export interface DeviceFile {
-	/** The path of the file, relative to the root of the file system it is on */
-	readonly path: string;
-	readonly inode: InodeLike;
-	/** The device number of the node, i.e. `inode.rdev` */
-	readonly devt: DevT;
-}
-
-/**
- * The operations a device driver provides, like Linux's `struct file_operations`.
- *
- * @privateRemarks
- * `open` and `release` are never called right now since `@zenfs/core` has no hook for opening a file.
- * They are here so drivers can be written against the interface they may eventually get.
- */
-export interface FileOperations {
-	open?: (file: DeviceFile) => void;
-	release?: (file: DeviceFile) => void;
-	// There is no way to report a short read, since `FileSystem.read` doesn't have one either.
-	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => void;
-	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
-	sync?: (file: DeviceFile) => void;
-	ioctl?: (file: DeviceFile, command: number) => Ioctl | undefined;
-}
 
 /** A region of device numbers reserved with `register_region`, i.e. `struct char_device_struct` */
 interface CharDevRegion {

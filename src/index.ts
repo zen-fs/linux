@@ -20,7 +20,6 @@ export * from './drivers/char/mem.js';
 export * as block_dev from './block_dev.js';
 export * as char_dev from './fs/char_dev.js';
 
-export type { DeviceFile, FileOperations } from './fs/char_dev.js';
 export { CharDevice } from './fs/char_dev.js';
 export type { BlockDeviceOperations, BlockIoctlOps, GenDiskInit } from './block_dev.js';
 export { BlkIoctl, BlockDevice, GenDisk, block_class, block_kobj } from './block_dev.js';
