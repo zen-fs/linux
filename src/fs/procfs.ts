@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { FSContext, InodeLike } from '@zenfs/core';
-import { _version, boundContexts, defaultContext, FileSystem, Inode, mounts, Sync } from '@zenfs/core';
+import { _version, boundContexts, defaultContext, FileSystem, Inode, Sync } from '@zenfs/core';
 import { S_IFDIR, S_IFLNK, S_IFREG } from '@zenfs/core/constants';
 import { withErrno } from 'kerium';
 import * as block_dev from '../block_dev.js';
@@ -65,12 +65,11 @@ function context(id: number): FSContext | undefined {
 /**
  * The mount table, shared by `/proc/mounts` and `/proc/<pid>/mounts`.
  * The "device" column is the file system's label when it has one, since nothing here is backed by a real device.
- * @todo accept context parameter and use `ctx.mounts` once its added
  */
-function show_mounts(): string {
+function show_mounts(ctx: FSContext): string {
 	let text = '';
 
-	for (const [path, fs] of mounts) {
+	for (const [path, fs] of ctx.mounts) {
 		const options = [fs.attributes.has('no_write') ? 'ro' : 'rw'];
 		if (fs.attributes.has('no_atime')) options.push('noatime');
 		if (fs.attributes.has('sync')) options.push('sync');
@@ -149,7 +148,7 @@ class ContextDir extends ProcDir {
 			fd: new FdDir(ctx),
 			fdinfo: new FdInfoDir(ctx),
 			status: file(() => show_status(ctx)),
-			mounts: file(show_mounts),
+			mounts: file(() => show_mounts(ctx)),
 			// Linux uses this for the command line, which a context doesn't have
 			comm: file(() => 'context\n'),
 		});
@@ -201,9 +200,9 @@ function show_modules(): string {
 /**
  * `/proc/filesystems`.
  */
-function show_filesystems(): string {
+function show_filesystems(ctx: FSContext): string {
 	const types = new Set<string>();
-	for (const fs of mounts.values()) types.add(fs.name);
+	for (const fs of ctx.mounts.values()) types.add(fs.name);
 
 	return [...types]
 		.sort()
@@ -262,9 +261,9 @@ class ProcRoot extends ProcDir {
 export const proc_root: ProcRoot = new ProcRoot({
 	self: new ProcLink(() => String(self_context.id)),
 	devices: file(show_devices),
-	filesystems: file(show_filesystems),
+	filesystems: file(() => show_filesystems(self_context)),
 	modules: file(show_modules),
-	mounts: file(show_mounts),
+	mounts: file(() => show_mounts(self_context)),
 	partitions: file(show_partitions),
 	uptime: file(show_uptime),
 	version: file(() => `ZenFS (@zenfs/linux) version ${$pkg.version} (core ${_version})`),
