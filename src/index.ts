@@ -22,11 +22,13 @@ export * as char_dev from './fs/char_dev.js';
 
 export type { DeviceFile, FileOperations } from './fs/char_dev.js';
 export { CharDevice } from './fs/char_dev.js';
-export type { BlockDeviceOperations, GenDiskInit } from './block_dev.js';
-export { BlockDevice, GenDisk, block_class, block_kobj } from './block_dev.js';
+export type { BlockDeviceOperations, BlockIoctlOps, GenDiskInit } from './block_dev.js';
+export { BlkIoctl, BlockDevice, GenDisk, block_class, block_kobj } from './block_dev.js';
 
 export * from './fs/configfs.js';
 export * from './fs/debugfs.js';
 export * from './fs/devtmpfs.js';
 export * from './fs/procfs.js';
 export * from './fs/sysfs.js';
+
+export * from './init.js';

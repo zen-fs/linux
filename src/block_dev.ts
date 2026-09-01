@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+import type { Ioctl, IoctlOps } from '@zenfs/core/internal/ioctl.js';
 import { withErrno } from 'kerium';
 import type { DevNode, DevT, DeviceAttribute, DeviceType } from './device.js';
 import { Device, format_dev_t, toDev } from './device.js';
@@ -15,6 +16,41 @@ export const diskMaxParts = 256;
 
 /** Sizes in the block layer are always counted in sectors this big */
 export const sectorSize = 512;
+
+/*
+ * The block ioctls, i.e. the `BLK*` half of `<linux>/include/uapi/linux/fs.h`.
+ * Only the ones that mean something without real hardware are here.
+ */
+export enum BlkIoctl {
+	/** Make the device read only, or writable again */
+	RoSet = 0x125d,
+	/** Whether the device is read only */
+	RoGet = 0x125e,
+	/** How big the device is, in {@link sectorSize | sectors} */
+	GetSize = 0x1260,
+	/** How big a logical sector is */
+	SSzGet = 0x1268,
+	/** How big a block is */
+	BSzGet = 0x80081270,
+	/** How big the device is, in bytes */
+	GetSize64 = 0x80081272,
+	/** How big a physical sector is */
+	PbSzGet = 0x127b,
+}
+
+/**
+ * What every block device answers, for
+ * `fs.ioctlSync<BlkIoctl.GetSize64, BlockIoctlOps>('/dev/sda', BlkIoctl.GetSize64)`.
+ */
+export interface BlockIoctlOps extends IoctlOps {
+	[BlkIoctl.RoSet](read_only: boolean): void;
+	[BlkIoctl.RoGet](): boolean;
+	[BlkIoctl.GetSize](): number;
+	[BlkIoctl.SSzGet](): number;
+	[BlkIoctl.BSzGet](): number;
+	[BlkIoctl.GetSize64](): number;
+	[BlkIoctl.PbSzGet](): number;
+}
 
 /**
  * Reserved majors, i.e. `major_names`. This is the "Block devices:" half of `/proc/devices`.
@@ -79,6 +115,8 @@ export interface BlockDeviceOperations {
 	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
 	sync?: (file: DeviceFile) => void;
 	dev_node?: (disk: GenDisk) => DevNode | undefined;
+	/** Analogous to `block_device_operations.ioctl` */
+	ioctl?: (file: DeviceFile, command: number) => Ioctl | undefined;
 }
 
 /** `/sys/block`, which holds a link to every whole disk. Partitions are only in `/sys/class/block`. */
@@ -171,9 +209,16 @@ export class BlockDevice {
 		return this.disk.name + (/\d$/.test(this.disk.name) ? 'p' : '') + this.part_no;
 	}
 
-	/** Whether this can be written to */
+	/** What `BlkIoctl.RoSet` was told, so a partition can be made read only without the whole disk being */
+	#readonly?: boolean;
+
+	/** Whether this can be written to. A partition of a read-only disk is read only whatever it was told. */
 	public get read_only(): boolean {
-		return !!this.disk.read_only;
+		return !!this.disk.read_only || !!this.#readonly;
+	}
+
+	public set read_only(value: boolean) {
+		this.#readonly = value;
 	}
 
 	/**
@@ -211,6 +256,27 @@ export class BlockDevice {
 			const data = buffer.subarray(0, limit - offset);
 
 			write(file, data, this.start * sectorSize + offset);
+		},
+
+		ioctl: (file, command: BlkIoctl) => {
+			switch (command) {
+				case BlkIoctl.RoSet:
+					return (read_only: boolean): void => {
+						this.read_only = read_only;
+					};
+				case BlkIoctl.RoGet:
+					return (): boolean => this.read_only;
+				case BlkIoctl.GetSize:
+					return (): number => this.nr_sectors;
+				case BlkIoctl.GetSize64:
+					return (): number => this.nr_sectors * sectorSize;
+				case BlkIoctl.SSzGet:
+				case BlkIoctl.BSzGet:
+				case BlkIoctl.PbSzGet:
+					return (): number => sectorSize;
+				default:
+					return this.disk.ops.ioctl?.(file, command);
+			}
 		},
 	};
 

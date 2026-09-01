@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { InodeLike } from '@zenfs/core';
 import { InMemoryStore, InodeFlags, StoreFS, isBlockDevice, isCharacterDevice } from '@zenfs/core';
+import type { Ioctl, IoctlContext } from '@zenfs/core/internal/ioctl.js';
 import { S_IFBLK, S_IFCHR } from '@zenfs/core/constants';
 import { dirname } from '@zenfs/core/path';
 import { withErrno } from 'kerium';
@@ -116,11 +117,10 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 
 	/**
 	 * The driver handling the node at `path`, if it is a device node.
+	 * @param inode The node's inode, for callers that already have an authoritative one
 	 * @throws ENXIO when nothing has claimed the node's device number
 	 */
-	protected _device(path: string): (DeviceFile & { ops: FileOperations }) | undefined {
-		const inode = this.statSync(path);
-
+	protected _device(path: string, inode: InodeLike = this.statSync(path)): (DeviceFile & { ops: FileOperations }) | undefined {
 		if (!isCharacterDevice(inode) && !isBlockDevice(inode)) return;
 
 		const devt = fromDev(inode.rdev);
@@ -161,5 +161,15 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 
 		if (!file.ops.write) throw withErrno('EINVAL');
 		file.ops.write(file, buffer, offset);
+	}
+
+	public getSyncIoctl(context: IoctlContext, command: number): Ioctl | null | undefined {
+		const file = this._device(context.path, context.inode);
+		return file?.ops.ioctl?.(file, command) ?? super.getSyncIoctl(context, command);
+	}
+
+	public getAsyncIoctl(context: IoctlContext, command: number): Ioctl | null | undefined {
+		const file = this._device(context.path, context.inode);
+		return file?.ops.ioctl?.(file, command) ?? super.getAsyncIoctl(context, command);
 	}
 }

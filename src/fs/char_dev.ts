@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { InodeLike } from '@zenfs/core';
+import type { Ioctl } from '@zenfs/core/internal/ioctl.js';
 import { withErrno } from 'kerium';
 import type { DevT } from '../device.js';
-import { minorMask, format_dev_t } from '../device.js';
+import { format_dev_t, minorMask } from '../device.js';
 import type { Module } from '../module.js';
 
 export const charDevMajorMax = 512;
@@ -36,15 +37,11 @@ export interface DeviceFile {
 export interface FileOperations {
 	open?: (file: DeviceFile) => void;
 	release?: (file: DeviceFile) => void;
-
-	/**
-	 * Read `[start, end)` into `buffer`.
-	 * @privateRemarks
-	 * There is no way to report a short read, since `FileSystem.read` doesn't have one either.
-	 */
+	// There is no way to report a short read, since `FileSystem.read` doesn't have one either.
 	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => void;
 	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
 	sync?: (file: DeviceFile) => void;
+	ioctl?: (file: DeviceFile, command: number) => Ioctl | undefined;
 }
 
 /** A region of device numbers reserved with `register_region`, i.e. `struct char_device_struct` */
