@@ -12,3 +12,4 @@ tests/.coverage
 !.gitignore
 !.prettierignore
 !.prettierrc
+*.tsbuildinfo
