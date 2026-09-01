@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
-import type { DevNode, DevT, DeviceType } from './device.js';
+import type { DevNode, DevT, DeviceAttribute, DeviceType } from './device.js';
 import { Device, format_dev_t, toDev } from './device.js';
 import { Class } from './drivers/base/class.js';
 import type { DeviceFile, FileOperations } from './fs/char_dev.js';
@@ -229,7 +229,7 @@ export class BlockDevice {
 		attrs.hidden = { mode: 0o444, show: () => +!!disk.hidden + '\n' };
 		attrs.diskseq = { mode: 0o444, show: () => disk.diskseq + '\n' };
 
-		return attrs;
+		return { ...attrs, ...disk.attrs };
 	}
 
 	/**
@@ -275,7 +275,7 @@ export class BlockDevice {
 }
 
 export interface GenDiskInit extends Partial<
-	Pick<GenDisk, 'first_minor' | 'minors' | 'capacity' | 'removable' | 'read_only' | 'hidden' | 'no_part' | 'owner' | 'parent'>
+	Pick<GenDisk, 'first_minor' | 'minors' | 'capacity' | 'removable' | 'read_only' | 'hidden' | 'no_part' | 'owner' | 'parent' | 'attrs'>
 > {
 	major: number;
 	/** The disk's name, which is also the name of its node under `/dev` */
@@ -315,6 +315,9 @@ export class GenDisk {
 
 	/** The device this disk hangs off, e.g. its controller. Disks without one are virtual. */
 	public parent?: Device;
+
+	/** Attributes the driver adds to the disk in sysfs, on top of the ones every disk gets */
+	public attrs: Record<string, DeviceAttribute> = {};
 
 	/** A number that is never reused, so a disk can be told apart from one that replaced it */
 	public readonly diskseq: number = next_diskseq++;

@@ -155,6 +155,9 @@ export class KObject {
  */
 export const sysfs_root: KObject = (root = new KObject(''));
 
+/** `/sys/kernel`, which debugfs and configfs are mounted under */
+export const kernel_kobj: KObject = new KObject('kernel');
+
 export interface Attribute {
 	/** The name of the attribute, set when it is added to a kobject. */
 	name?: string;
@@ -209,6 +212,8 @@ export function sysfs_lookup(path: string): KEntry | null {
 	let current: KEntry = sysfs_root;
 
 	for (const part of path.split('/').filter(p => p)) {
+		if (current instanceof KLink) current = current.target;
+
 		if (!(current instanceof KObject)) throw withErrno('ENOTDIR');
 
 		const next = current.lookup(part);
@@ -227,6 +232,17 @@ export function kobj_create(path: string): KObject {
 	const name = basename(path);
 	if (parent.lookup(name)) throw withErrno('EEXIST');
 
+	return new KObject(name, parent);
+}
+
+/**
+ * Create an empty directory in sysfs for something else to be mounted over,
+ * like `/sys/kernel/debug` for debugfs. This is Linux's `sysfs_create_mount_point`.
+ */
+export function sysfs_create_mount_point(parent: KObject, name: string): KObject {
+	const existing = parent.lookup(name);
+	if (existing instanceof KObject) return existing;
+	if (existing) throw withErrno('EEXIST');
 	return new KObject(name, parent);
 }
 
@@ -265,5 +281,4 @@ export function kobj_init() {
 	new KObject('firmware');
 	new KObject('fs');
 	new KObject('hypervisor');
-	new KObject('kernel');
 }

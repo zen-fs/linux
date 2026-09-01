@@ -2,6 +2,10 @@
 import { FileSystem, Sync } from '@zenfs/core';
 import type { InodeLike } from '@zenfs/core';
 import { withErrno } from 'kerium';
+import { kernel_kobj, sysfs_create_mount_point } from '../kobject.js';
+
+/** `/sys/kernel/config`, the empty directory this is mounted over */
+sysfs_create_mount_point(kernel_kobj, 'config');
 
 /**
  * @see https://www.kernel.org/doc/html/latest/filesystems/configfs.html
