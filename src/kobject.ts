@@ -262,7 +262,6 @@ export type UEventListener = (event: UEvent) => unknown;
 export const uevent_listeners = new Set<UEventListener>();
 
 export function kobj_init() {
-	new KObject('block');
 	new KObject('firmware');
 	new KObject('fs');
 	new KObject('hypervisor');

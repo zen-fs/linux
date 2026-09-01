@@ -8,6 +8,7 @@ import type { Attribute, UEventEnv } from './kobject.js';
 import { KObject, sysfs_create_link, sysfs_remove_link } from './kobject.js';
 import type { DevicePowerInfo } from './power.js';
 import { dev_block_kobj, dev_char_kobj, devices_kobj, virtual_kobj } from './drivers/base/base.js';
+import { device_nodes, devtmpfs } from './fs/devtmpfs.js';
 
 export interface DeviceAttribute extends Attribute {}
 
@@ -23,8 +24,25 @@ export interface DeviceType {
 	readonly name: string;
 	readonly dev_attrs: Record<string, DeviceAttribute>;
 
+	/** The name and mode devices of this type get under `/dev` @see Device.dev_node */
+	dev_node?(this: void, device: Device): DevNode | undefined;
+
+	/** Add variables to the environment of uevents for devices of this type */
+	uevent?(device: Device, env: UEventEnv): void;
+
 	/** @todo pm? */
 }
+
+export interface DevNode {
+	/** A path relative to the root of devtmpfs, so it may contain `/` */
+	name?: string;
+	/** Permission bits. The default is `0o600`. */
+	mode?: number;
+}
+
+/** How many bits of a device number are the minor */
+export const minorBits = 20,
+	minorMask = (1 << minorBits) - 1;
 
 /** A device number, like Linux's `dev_t` */
 export interface DevT {
@@ -32,8 +50,25 @@ export interface DevT {
 	minor: number;
 }
 
-export function format_devt(devt: DevT): string {
+/** Pack a device number into a single integer */
+export function toDev(devt: DevT): number {
+	return (devt.major << minorBits) | devt.minor;
+}
+
+/** Unpack a device number */
+export function fromDev(dev: number): DevT {
+	return { major: dev >>> minorBits, minor: dev & minorMask };
+}
+
+export function format_dev_t(devt: DevT): string {
 	return devt.major + ':' + devt.minor;
+}
+
+/**
+ * Whether a device is a block device rather than a character device.
+ */
+export function is_block_dev(device: Device): boolean {
+	return device.class?.name == 'block';
 }
 
 /**
@@ -57,7 +92,11 @@ export class DeviceKObject extends KObject {
 		if (devt) {
 			env.MAJOR = String(devt.major);
 			env.MINOR = String(devt.minor);
+			const node = this.device.dev_node();
+			env.DEVNAME = node.name;
+			if (node.mode) env.DEVMODE = '0' + (node.mode & 0o777).toString(8);
 		}
+		type?.uevent?.(this.device, env);
 	}
 }
 
@@ -242,13 +281,15 @@ export class Device {
 
 		const devt = this.devt;
 		if (devt) {
-			kobj.create_attribute('dev', () => format_devt(devt) + '\n');
-			sysfs_create_link(this.class?.name == 'block' ? dev_block_kobj : dev_char_kobj, kobj, format_devt(devt));
+			kobj.create_attribute('dev', () => format_dev_t(devt) + '\n');
+			sysfs_create_link(is_block_dev(this) ? dev_block_kobj : dev_char_kobj, kobj, format_dev_t(devt));
+			device_nodes.add(this);
+			devtmpfs?.create_node(this);
 		}
 
 		if (this.class) {
 			sysfs_create_link(kobj, this.class, 'subsystem');
-			if (this.parent?.kobject) sysfs_create_link(kobj, this.parent.kobject, 'device');
+			if (this.parent?.kobject && this.type?.name != 'partition') sysfs_create_link(kobj, this.parent.kobject, 'device');
 			sysfs_create_link(this.class, kobj, this.name);
 		}
 
@@ -275,7 +316,11 @@ export class Device {
 
 		this.kobject.notify_uevent('remove');
 
-		if (this.devt) sysfs_remove_link(this.class?.name == 'block' ? dev_block_kobj : dev_char_kobj, format_devt(this.devt));
+		if (this.devt) {
+			device_nodes.delete(this);
+			devtmpfs?.delete_node(this);
+			sysfs_remove_link(is_block_dev(this) ? dev_block_kobj : dev_char_kobj, format_dev_t(this.devt));
+		}
 
 		if (this.class) sysfs_remove_link(this.class, this.name);
 
@@ -286,5 +331,22 @@ export class Device {
 
 		this.kobject.dispose();
 		delete this.kobject;
+	}
+
+	/**
+	 * Work out the name and mode a device's node under `/dev` should have.
+	 * @returns a `mode` of 0 when nothing set one
+	 * @internal
+	 */
+	dev_node(): { name: string; mode: number } {
+		let node: DevNode | undefined = this.type?.dev_node?.(this);
+		let mode = node?.mode ?? 0;
+
+		if (!node?.name) {
+			node = this.class?.dev_node?.(this);
+			mode = node?.mode ?? mode;
+		}
+
+		return { name: node?.name ?? this.name.replaceAll('!', '/'), mode };
 	}
 }
