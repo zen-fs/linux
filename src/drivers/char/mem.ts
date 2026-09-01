@@ -90,7 +90,7 @@ const memory_ops: FileOperations = {
 
 /** `/sys/class/mem` */
 export const mem_class = new Class('mem', {
-	dev_node: device => ({ mode: device.devt && dev_list[device.devt.minor]?.mode }),
+	dev_node: device => ({ mode: device.dev_t && dev_list[device.dev_t.minor]?.mode }),
 });
 
 /**
@@ -100,6 +100,6 @@ export function char_dev_init(): void {
 	char_dev.register(memMajor, 'mem', memory_ops);
 
 	for (const [minor, dev] of Object.entries(dev_list)) {
-		new Device({ name: dev.name, class: mem_class, devt: { major: memMajor, minor: +minor } }).register();
+		new Device({ name: dev.name, class: mem_class, dev_t: { major: memMajor, minor: +minor } }).register();
 	}
 }

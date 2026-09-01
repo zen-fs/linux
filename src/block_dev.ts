@@ -245,7 +245,7 @@ export class BlockDevice {
 			name: this.name,
 			class: block_class,
 			type: this.part_no ? part_type : disk_type,
-			devt: this.dev_t,
+			dev_t: this.dev_t,
 			// A partition hangs off its disk, so it ends up at `/sys/.../<disk>/<partition>`
 			parent: this.part_no ? this.disk.part0.device : this.disk.parent,
 		});

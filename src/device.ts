@@ -83,15 +83,15 @@ export class DeviceKObject extends KObject {
 	}
 
 	uevent(env: UEventEnv): void {
-		const { bus, class: cls, type, devt, driver } = this.device;
+		const { bus, class: cls, type, dev_t, driver } = this.device;
 
 		if (bus) env.SUBSYSTEM = bus.name;
 		if (cls) env.SUBSYSTEM = cls.name;
 		if (type) env.DEVTYPE = type.name;
 		if (driver) env.DRIVER = driver.name;
-		if (devt) {
-			env.MAJOR = String(devt.major);
-			env.MINOR = String(devt.minor);
+		if (dev_t) {
+			env.MAJOR = String(dev_t.major);
+			env.MINOR = String(dev_t.minor);
 			const node = this.device.dev_node();
 			env.DEVNAME = node.name;
 			if (node.mode) env.DEVMODE = '0' + (node.mode & 0o777).toString(8);
@@ -100,7 +100,7 @@ export class DeviceKObject extends KObject {
 	}
 }
 
-export interface DeviceInit extends Partial<Pick<Device, 'name' | 'parent' | 'id' | 'bus' | 'driver' | 'type' | 'class' | 'devt' | 'kobj_parent'>> {}
+export interface DeviceInit extends Partial<Pick<Device, 'name' | 'parent' | 'id' | 'bus' | 'driver' | 'type' | 'class' | 'dev_t' | 'kobj_parent'>> {}
 
 function class_dir(name: string, parent: KObject): KObject {
 	const existing = parent.children.get(name);
@@ -122,7 +122,7 @@ export class Device {
 	public class?: Class;
 
 	/** The device number. Devices with one get a `dev` attribute and a link in `/sys/dev`. */
-	public devt?: DevT;
+	public dev_t?: DevT;
 
 	/**
 	 * Forces where the device goes in sysfs, like setting `dev->kobj.parent` before `register`.
@@ -144,7 +144,7 @@ export class Device {
 
 		if (!init.name) throw withErrno('EINVAL');
 
-		Object.assign(this, pick(init, 'name', 'parent', 'id', 'bus', 'driver', 'type', 'class', 'devt', 'kobj_parent'));
+		Object.assign(this, pick(init, 'name', 'parent', 'id', 'bus', 'driver', 'type', 'class', 'dev_t', 'kobj_parent'));
 	}
 
 	/** Whether the device is currently in sysfs */
@@ -279,7 +279,7 @@ export class Device {
 		const attrs = { ...this.bus?.dev_attrs, ...this.class?.dev_attrs, ...this.type?.dev_attrs, ...this.attrs };
 		for (const [name, attr] of Object.entries(attrs)) kobj.children.set(name, { ...attr, name });
 
-		const devt = this.devt;
+		const devt = this.dev_t;
 		if (devt) {
 			kobj.create_attribute('dev', () => format_dev_t(devt) + '\n');
 			sysfs_create_link(is_block_dev(this) ? dev_block_kobj : dev_char_kobj, kobj, format_dev_t(devt));
@@ -316,10 +316,10 @@ export class Device {
 
 		this.kobject.notify_uevent('remove');
 
-		if (this.devt) {
+		if (this.dev_t) {
 			device_nodes.delete(this);
 			devtmpfs?.delete_node(this);
-			sysfs_remove_link(is_block_dev(this) ? dev_block_kobj : dev_char_kobj, format_dev_t(this.devt));
+			sysfs_remove_link(is_block_dev(this) ? dev_block_kobj : dev_char_kobj, format_dev_t(this.dev_t));
 		}
 
 		if (this.class) sysfs_remove_link(this.class, this.name);

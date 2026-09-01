@@ -78,13 +78,13 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 	 * @internal
 	 */
 	public create_node(device: Device): void {
-		if (!device.devt) return;
+		if (!device.dev_t) return;
 
 		const { name, mode } = device.dev_node();
 		const path = '/' + name;
 
 		this._create_path(dirname(path));
-		this.mknodSync(path, (mode || 0o600) | (is_block_dev(device) ? S_IFBLK : S_IFCHR), toDev(device.devt));
+		this.mknodSync(path, (mode || 0o600) | (is_block_dev(device) ? S_IFBLK : S_IFCHR), toDev(device.dev_t));
 	}
 
 	/**
@@ -93,7 +93,7 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 	 * @internal
 	 */
 	public delete_node(device: Device): void {
-		if (!device.devt) return;
+		if (!device.dev_t) return;
 
 		const path = '/' + device.dev_node().name;
 
@@ -106,7 +106,7 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 
 		if (!(inode.flags! & InodeFlags.Private)) return;
 		if (is_block_dev(device) ? !isBlockDevice(inode) : !isCharacterDevice(inode)) return;
-		if (inode.rdev != toDev(device.devt)) return;
+		if (inode.rdev != toDev(device.dev_t)) return;
 
 		this.unlinkSync(path);
 		if (path.lastIndexOf('/') > 0) this._delete_path(dirname(path));
