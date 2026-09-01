@@ -1,5 +1,6 @@
 import { driver_init } from './drivers/base/init.js';
 import { char_dev_init } from './drivers/char/mem.js';
+import { tty } from './drivers/tty/index.js';
 import { kobj_init } from './kobject.js';
 import { DevTmpFS } from './fs/devtmpfs.js';
 import { ProcFS } from './fs/procfs.js';
@@ -36,4 +37,7 @@ export async function init() {
 			output: console.log,
 		},
 	});
+
+	// Built-in modules
+	await tty.init();
 }

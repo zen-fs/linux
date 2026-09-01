@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
 import { Device } from '../../device.js';
-import type { DeviceFile, FileOperations } from '../../fs/char_dev.js';
+import type { DeviceFile, FileOperations } from '../../fs/devtmpfs.js';
 import * as char_dev from '../../fs/char_dev.js';
 import { Class } from '../base/class.js';
 
@@ -32,8 +32,6 @@ interface MemDevice {
  * @see `<linux>/Documentation/admin-guide/devices.txt`.
  */
 const dev_list: Record<number, MemDevice> = {
-	// There is no way to report a short read, so a read leaves the buffer alone rather than zeroing it.
-	// Since the node's size is 0, nothing reads past the end anyway.
 	3: { name: 'null', ops: { read() {}, write() {} }, mode: 0o666 },
 	5: {
 		name: 'zero',
