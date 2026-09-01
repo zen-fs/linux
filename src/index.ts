@@ -17,6 +17,7 @@ export * from './drivers/base/platform.js';
 
 export * from './drivers/char/mem.js';
 export * from './drivers/tty/index.js';
+export * from './drivers/webstorage/index.js';
 
 export * as block_dev from './block_dev.js';
 export * as char_dev from './fs/char_dev.js';
