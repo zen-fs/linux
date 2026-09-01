@@ -131,6 +131,14 @@ export function lookup(dev_t: DevT): BlockDevice | undefined {
 }
 
 /**
+ * Every block device that currently exists, disks and partitions alike, in device number order.
+ * This is what `/proc/partitions` lists.
+ */
+export function devices(): BlockDevice[] {
+	return [...dev_map].sort(([a], [b]) => a - b).map(([, dev]) => dev);
+}
+
+/**
  * A whole disk or one of its partitions, i.e. `struct block_device`.
  *
  * Every one of these has a device number of its own, so it gets a node under `/dev`

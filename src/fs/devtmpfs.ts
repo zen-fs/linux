@@ -27,7 +27,9 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 	public constructor() {
 		// Please don't store your temporary files in /dev.
 		// If you do, you'll have up to 16 MiB
-		super(new InMemoryStore(0x1000000, 'devtmpfs'));
+		const store = new InMemoryStore(0x1000000, 'devtmpfs');
+		Object.assign(store, { name: 'devtmpfs' });
+		super(store);
 	}
 
 	public async ready(): Promise<void> {
