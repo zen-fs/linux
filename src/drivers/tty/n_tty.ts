@@ -90,7 +90,10 @@ export class LineDiscipline {
 
 			if (byte == chars[cc.VEOF]) {
 				if (this.line.length) this.commit();
-				else this.eof = true;
+				else {
+					this.eof = true;
+					this.tty.wake_read();
+				}
 				continue;
 			}
 
@@ -104,12 +107,17 @@ export class LineDiscipline {
 			this.line.push(byte);
 			this.echo(byte);
 		}
+
+		// Without ICANON there are no lines to wait for, so everything taken in is published at the
+		// end of the block rather than a byte at a time, the way `__receive_buf` does it.
+		if (!this.canonical && this.buffer.length) this.tty.wake_read();
 	}
 
-	/** Hand the line being typed over to be read */
+	/** Hand the line being typed over to be read, i.e. `n_tty_receive_handle_newline` */
 	protected commit(): void {
 		this.buffer.push(...this.line);
 		this.line = [];
+		this.tty.wake_read();
 	}
 
 	/**

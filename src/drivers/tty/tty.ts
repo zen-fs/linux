@@ -108,6 +108,29 @@ export class TTY {
 		return this.ldisc.available;
 	}
 
+	/** Whatever is waiting for input to arrive, i.e. `tty->read_wait` */
+	protected readonly read_wait = new Set<() => void>();
+
+	/**
+	 * Wait for input to arrive, i.e. `add_wait_queue(&tty->read_wait, ...)`.
+	 * There is nothing to block on here, so a waiter is called once there is something to read
+	 * and reads it then, the way a woken task would.
+	 * @returns a function that stops waiting, i.e. `remove_wait_queue`
+	 */
+	public wait_read(waiter: () => void): () => void {
+		this.read_wait.add(waiter);
+		return () => this.read_wait.delete(waiter);
+	}
+
+	/**
+	 * Let whatever is waiting know there is input to be read,
+	 * i.e. `wake_up_interruptible_poll(&tty->read_wait, EPOLLIN)`.
+	 * The line discipline is what decides when that is, since only it knows whether a line is finished.
+	 */
+	public wake_read(): void {
+		for (const waiter of [...this.read_wait]) waiter();
+	}
+
 	/**
 	 * Take bytes from the terminal.
 	 * Call this from whatever is driving the tty when the user types something.
