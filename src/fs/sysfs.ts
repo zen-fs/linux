@@ -51,6 +51,7 @@ export class SysFS extends Sync(FileSystem) {
 			ctimeMs: this.initTime,
 			birthtimeMs: this.initTime,
 			size: 4096,
+			nlink: 1,
 			mode: obj instanceof KObject ? S_IFDIR | 0o555 : obj instanceof KLink ? S_IFLNK | 0o777 : S_IFREG | obj.mode,
 		});
 

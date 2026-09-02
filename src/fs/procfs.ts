@@ -338,6 +338,7 @@ export class ProcFS extends Sync(FileSystem) {
 			ctimeMs: this.initTime,
 			birthtimeMs: this.initTime,
 			size: 0,
+			nlink: 1,
 			mode: (entry instanceof ProcDir ? S_IFDIR : entry instanceof ProcLink ? S_IFLNK : S_IFREG) | entry.mode,
 		});
 
