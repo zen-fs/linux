@@ -265,7 +265,7 @@ export const proc_root: ProcRoot = new ProcRoot({
 	mounts: file(() => show_mounts(self())),
 	partitions: file(show_partitions),
 	uptime: file(show_uptime),
-	version: file(() => `ZenFS (@zenfs/linux) version ${$pkg.version} (core ${_version})`),
+	version: file(() => `ZenFS (@zenfs/linux) version ${$pkg.version} (core ${_version})\n`),
 });
 
 /**
