@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+import { Signal } from '../../signal.js';
 import type { TTY } from './tty.js';
 import { cc, iflags, lflags, oflags } from './termios.js';
 
 const encoder = new TextEncoder();
 
-/** What a terminal does when the interrupt or quit character is typed */
-export type TTYSignal = 'INT' | 'QUIT';
+/** The characters that raise a signal and what each one raises, like the `__isig` switch */
+const signal_chars: [index: number, signal: Signal][] = [
+	[cc.VINTR, Signal.INT],
+	[cc.VQUIT, Signal.QUIT],
+	[cc.VSUSP, Signal.TSTP],
+];
 
 /**
  * The N_TTY line discipline, i.e. `drivers/tty/n_tty.c`.
@@ -21,9 +26,6 @@ export class LineDiscipline {
 	protected eof: boolean = false;
 
 	public constructor(protected readonly tty: TTY) {}
-
-	/** Called when the interrupt or quit character is typed, since there is no process to signal */
-	public onsignal?: (signal: TTYSignal, tty: TTY) => void;
 
 	public get available(): number {
 		return this.buffer.length;
@@ -56,16 +58,12 @@ export class LineDiscipline {
 			}
 
 			if (lflag & lflags.ISIG) {
-				if (byte == chars[cc.VINTR]) {
-					this.echo(0x5e, 0x40 + byte); // ^C
-					this.line = [];
-					this.onsignal?.('INT', this.tty);
-					continue;
-				}
-				if (byte == chars[cc.VQUIT]) {
+				const raised = signal_chars.find(([index]) => byte == chars[index]);
+				if (raised) {
 					this.echo(0x5e, 0x40 + byte);
 					this.line = [];
-					this.onsignal?.('QUIT', this.tty);
+					this.buffer = [];
+					this.tty.signal(raised[1]);
 					continue;
 				}
 			}

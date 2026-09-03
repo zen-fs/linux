@@ -62,6 +62,7 @@ export function execve(proc: Process, path: string, argv: string[] = [path], env
 	const do_exec = search_binary_handler({ proc, filename, buf: buffer.subarray(0, read), argv, env: proc.env });
 
 	const previous = set_current(proc);
+	if (proc.tty) proc.tty.foreground = proc;
 
 	try {
 		// Linux returns to userspace here and the program runs on its own; nothing here can do that.

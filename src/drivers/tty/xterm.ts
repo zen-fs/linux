@@ -3,6 +3,7 @@ import { withErrno } from 'kerium';
 import type { Module } from '../../module.js';
 import type { PlatformDevice } from '../base/platform.js';
 import { PlatformDriver } from '../base/platform.js';
+import { Signal } from '../../signal.js';
 import type { DeviceTreeNode } from '../of/device_tree.js';
 import { console_tty, set_console } from './console.js';
 import type { TTY, WinSize } from './tty.js';
@@ -72,8 +73,7 @@ export function attach_xterm(terminal: XTermLike, options: AttachXTermOptions = 
 
 	const disposables = [];
 	if (options.input ?? true) disposables.push(terminal.onData(data => tty.receive(data)));
-	// Nothing needs telling that the size changed, but holding the listener keeps `winsize` honest
-	if (terminal.onResize) disposables.push(terminal.onResize(() => {}));
+	if (terminal.onResize) disposables.push(terminal.onResize(() => tty.signal(Signal.WINCH)));
 	listeners.set(tty, disposables);
 
 	tty.register();

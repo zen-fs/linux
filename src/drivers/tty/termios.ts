@@ -47,6 +47,7 @@ export const cc = {
 	VERASE: 2,
 	VKILL: 3,
 	VEOF: 4,
+	VSUSP: 5,
 } as const;
 
 /** What `tcflush` and `TCFLSH` throw away */
@@ -76,8 +77,8 @@ export const default_termios: Termios = {
 	iflag: iflags.ICRNL,
 	oflag: oflags.OPOST | oflags.ONLCR,
 	lflag: lflags.ISIG | lflags.ICANON | lflags.ECHO | lflags.ECHOE,
-	// INTR ^C, QUIT ^\, ERASE DEL, KILL ^U, EOF ^D
-	cc: [0x03, 0x1c, 0x7f, 0x15, 0x04],
+	// INTR ^C, QUIT ^\, ERASE DEL, KILL ^U, EOF ^D, SUSP ^Z
+	cc: [0x03, 0x1c, 0x7f, 0x15, 0x04, 0x1a],
 };
 
 /** Line settings with no processing at all, which is what a full-screen program wants */

@@ -3,9 +3,11 @@ import type { FSContext } from '@zenfs/core';
 import { bindContext, boundContexts, defaultContext, fs } from '@zenfs/core';
 import { O_RDWR } from '@zenfs/core/constants';
 import { dupFD } from '@zenfs/core/vfs/file.js';
-import { UV } from 'kerium';
+import { UV, withErrno } from 'kerium';
 import { console_tty } from './drivers/tty/console.js';
 import type { TTY } from './drivers/tty/tty.js';
+import type { SignalHandler, SignalLike } from './signal.js';
+import { default_action, sig_kernel_only, Signal, signal_name, signal_of } from './signal.js';
 
 export interface ProcessInit {
 	argv?: string[];
@@ -55,6 +57,18 @@ export class Process {
 
 	/** What the process stopped with, once it has. */
 	public code?: number;
+
+	/** The signal that killed the process, if one did */
+	public killed_by?: Signal;
+
+	/** Whether a job control signal has stopped the process, like `JOBCTL_STOPPED` */
+	public stopped: boolean = false;
+
+	/**
+	 * What the process has asked to be told about, like `struct sighand_struct`.
+	 * A signal with nothing here gets its {@link default_action}.
+	 */
+	public readonly sigHandlers = new Map<Signal, Set<SignalHandler>>();
 
 	/** A pid is the id of the process' context. */
 	public get pid(): number {
@@ -106,6 +120,61 @@ export class Process {
 		this.env.PWD = target;
 	}
 
+	/** Ask to be told when a signal arrives, like `sigaction` with a handler. */
+	public sig_action(signal: SignalLike, handler: SignalHandler): void {
+		const sig = signal_of(signal);
+		if (sig_kernel_only(sig)) throw withErrno('EINVAL', `${signal_name(sig)} cannot be caught or ignored`);
+
+		let handlers = this.sigHandlers.get(sig);
+		if (!handlers) this.sigHandlers.set(sig, (handlers = new Set()));
+		handlers.add(handler);
+	}
+
+	/**
+	 * Stop listening for a signal, like going back to `SIG_DFL`.
+	 * Without a handler every one installed for the signal is taken off.
+	 */
+	public sig_default(signal: SignalLike, handler?: SignalHandler): void {
+		const sig = signal_of(signal);
+		if (!handler) this.sigHandlers.delete(sig);
+		else if (this.sigHandlers.get(sig)?.delete(handler) && !this.sigHandlers.get(sig)!.size) this.sigHandlers.delete(sig);
+	}
+
+	/** Send a signal to the process */
+	public kill(signal: SignalLike): boolean {
+		const sig = signal_of(signal);
+
+		if (this.code !== undefined) return false;
+
+		const handlers = sig_kernel_only(sig) ? undefined : this.sigHandlers.get(sig);
+
+		if (handlers?.size) {
+			const name = signal_name(sig);
+			for (const handler of [...handlers]) handler(name, sig);
+			return true;
+		}
+
+		if (this.pid == 1) return false;
+
+		switch (default_action(sig)) {
+			case 'ign':
+				return false;
+			case 'stop':
+				this.stopped = true;
+				return true;
+			case 'cont':
+				this.stopped = false;
+				return true;
+			case 'term':
+			case 'core':
+				this.killed_by = sig;
+				this.code = 128 + sig;
+				if (current === this) throw Process.exit;
+				this.dispose();
+				return true;
+		}
+	}
+
 	/** Release everything the process was holding and drop it from the table */
 	public dispose(): void {
 		const init = processes.get(1);
@@ -128,6 +197,8 @@ export class Process {
 			}
 		}
 
+		if (this.tty?.foreground === this) this.tty.foreground = this.parent;
+
 		this.parent?.children.delete(this);
 		processes.delete(this.pid);
 		if (this.context !== defaultContext) boundContexts.delete(this.pid);
@@ -138,4 +209,14 @@ export class Process {
 	}
 
 	static exit = Object.create(Object.assign(Object.create(null), { [kIsProcessExit]: true }));
+}
+
+/**
+ * Send a signal to a process by pid.
+ * @throws ESRCH when there is no such process
+ */
+export function kill(pid: number, signal: SignalLike = Signal.TERM): boolean {
+	const proc = processes.get(pid);
+	if (!proc) throw UV('ESRCH', { syscall: 'kill' });
+	return proc.kill(signal);
 }

@@ -7,6 +7,7 @@ export * from './module.js';
 export * from './power.js';
 export * from './process.js';
 export * from './resources.js';
+export * from './signal.js';
 
 export * from './drivers/base/base.js';
 export * from './drivers/base/bus.js';

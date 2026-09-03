@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+import { Signal } from '../../signal.js';
 import type { TTY, WinSize } from './tty.js';
 import { TTYDriver } from './tty.js';
 
@@ -70,7 +71,9 @@ export function attach_stdio(host: unknown = globalThis): TTY | null {
 	stdio = found;
 	const tty = node_driver.line(0);
 
-	const { stdin } = found;
+	const undo: (() => void)[] = [];
+
+	const { stdin, stdout } = found;
 	if (stdin) {
 		const listener = (chunk: Uint8Array | string) => tty.receive(chunk);
 		stdin.on('data', listener);
@@ -78,12 +81,22 @@ export function attach_stdio(host: unknown = globalThis): TTY | null {
 		if (raw) stdin.setRawMode!(true);
 		stdin.resume?.();
 		stdin.unref?.();
-		detach = () => {
+		undo.push(() => {
 			stdin.off?.('data', listener);
 			if (raw) stdin.setRawMode!(false);
 			stdin.pause?.();
-		};
+		});
 	}
+
+	if (stdout.on) {
+		const listener = () => tty.signal(Signal.WINCH);
+		stdout.on('resize', listener);
+		undo.push(() => stdout.off?.('resize', listener));
+	}
+
+	detach = () => {
+		for (const fn of undo) fn();
+	};
 
 	tty.register();
 	return tty;

@@ -6,6 +6,8 @@ import * as char_dev from '../../fs/char_dev.js';
 import { CharDevice } from '../../fs/char_dev.js';
 import type { DeviceFile, FileOperations } from '../../fs/devtmpfs.js';
 import type { Module } from '../../module.js';
+import type { Process } from '../../process.js';
+import { Signal } from '../../signal.js';
 import { Class } from '../base/class.js';
 import { LineDiscipline } from './n_tty.js';
 import type { Termios } from './termios.js';
@@ -68,6 +70,9 @@ export class TTY {
 
 	/** The device in sysfs, only set while the tty is registered */
 	public device?: Device;
+
+	/** What the terminal is in front of, i.e. `tty->pgrp`. */
+	public foreground?: Process;
 
 	public constructor(
 		public readonly driver: TTYDriver,
@@ -147,6 +152,16 @@ export class TTY {
 	/** Stop using the terminal */
 	public close(): void {
 		this.driver.ops.close?.(this);
+	}
+
+	/**
+	 * Signal whatever the terminal is in front of, like what `__isig` and `TIOCSWINSZ` do.
+	 * @returns whether there was anything to signal
+	 */
+	public signal(signal: Signal): boolean {
+		if (!this.foreground) return false;
+		this.foreground.kill(signal);
+		return true;
 	}
 
 	/** Send bytes to the terminal, after output processing */
@@ -250,7 +265,9 @@ export const tty_ioctls: Record<number, TTYIoctl> = {
 	[TtyIoctl.InputQueue]: ($, tty): number => tty.available,
 	[TtyIoctl.GetWinsize]: ($, tty): WinSize => tty.winsize,
 	[TtyIoctl.SetWinsize]: ($, tty, size: WinSize): void => {
+		const { rows, cols } = tty.winsize;
 		tty.winsize = size;
+		if (size.rows != rows || size.cols != cols) tty.signal(Signal.WINCH);
 	},
 };
 
