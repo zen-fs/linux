@@ -43,11 +43,7 @@ export function execve(proc: Process, path: string, argv: string[] = [path], env
 	const $ = proc.context;
 
 	const filename = fs.realpathSync.call($, path);
-	try {
-		fs.accessSync.call($, filename, X_OK);
-	} catch {
-		throw UV('EACCES', 'execve', filename);
-	}
+	fs.accessSync.call($, filename, X_OK);
 
 	const buffer = new Uint8Array(binPrmBufSize);
 	const fd = fs.openSync.call($, filename, O_RDONLY);
