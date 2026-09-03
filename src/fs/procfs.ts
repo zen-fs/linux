@@ -5,6 +5,7 @@ import { S_IFDIR, S_IFLNK, S_IFREG } from '@zenfs/core/constants';
 import { withErrno } from 'kerium';
 import * as block_dev from './block_dev.js';
 import { sectorSize } from './block_dev.js';
+import { initConfig } from '../init.js';
 import { modules } from '../module.js';
 import { processes } from '../process.js';
 import * as char_dev from './char_dev.js';
@@ -269,6 +270,7 @@ class ProcRoot extends ProcDir {
  */
 export const proc_root: ProcRoot = new ProcRoot({
 	self: new ProcLink(() => String(self_context.id)),
+	cmdline: file(() => initConfig._saved + '\n'),
 	devices: file(show_devices),
 	filesystems: file(() => show_filesystems(self_context)),
 	modules: file(show_modules),
