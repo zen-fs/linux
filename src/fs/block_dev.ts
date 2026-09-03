@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { IoctlContext, IoctlOps } from '@zenfs/core/internal/ioctl.js';
 import { withErrno } from 'kerium';
-import type { DevNode, DevT, DeviceAttribute, DeviceType } from './device.js';
-import { Device, format_dev_t, toDev } from './device.js';
-import { Class } from './drivers/base/class.js';
-import type { DeviceFile, DeviceIoctl, FileOperations } from './fs/devtmpfs.js';
-import { KObject, sysfs_create_link, sysfs_remove_link } from './kobject.js';
-import type { Module } from './module.js';
+import type { DevNode, DevT, DeviceAttribute, DeviceType } from '../device.js';
+import { Device, format_dev_t, toDev } from '../device.js';
+import { Class } from '../drivers/base/class.js';
+import type { DeviceFile, DeviceIoctl, FileOperations } from './devtmpfs.js';
+import { KObject, sysfs_create_link, sysfs_remove_link } from '../kobject.js';
+import type { Module } from '../module.js';
 import { assignWithDefaults, pick } from 'utilium';
 
 export const blockDevMajorMax = 512;

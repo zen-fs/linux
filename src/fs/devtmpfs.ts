@@ -7,7 +7,7 @@ import { dirname } from '@zenfs/core/path';
 import { withErrno } from 'kerium';
 import type { Device, DevT } from '../device.js';
 import { is_block_dev, toDev, fromDev } from '../device.js';
-import * as block_dev from '../block_dev.js';
+import * as block_dev from './block_dev.js';
 import * as char_dev from './char_dev.js';
 
 /**

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
 import { decodeASCII, encodeASCII, pick } from 'utilium';
-import type { GenDiskInit } from '../../block_dev.js';
-import { GenDisk } from '../../block_dev.js';
+import type { GenDiskInit } from '../../fs/block_dev.js';
+import { GenDisk } from '../../fs/block_dev.js';
 
 /** How many minors each disk gets, so it has room for 15 partitions */
 export const diskMinors = 16;

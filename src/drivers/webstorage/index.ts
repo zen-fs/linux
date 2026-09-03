@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
-import * as block_dev from '../../block_dev.js';
-import { sectorSize } from '../../block_dev.js';
+import * as block_dev from '../../fs/block_dev.js';
+import { sectorSize } from '../../fs/block_dev.js';
 import { Device } from '../../device.js';
 import { Module } from '../../module.js';
 import type { PlatformDevice } from '../base/platform.js';

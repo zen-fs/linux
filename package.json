@@ -76,5 +76,9 @@
 	},
 	"allowScripts": {
 		"esbuild": true
+	},
+	"dependencies": {
+		"@endo/module-source": "^1.5.0",
+		"ses": "^2.3.0"
 	}
 }

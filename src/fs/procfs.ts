@@ -3,9 +3,10 @@ import type { FSContext, InodeLike } from '@zenfs/core';
 import { _version, boundContexts, defaultContext, FileSystem, Inode, Sync } from '@zenfs/core';
 import { S_IFDIR, S_IFLNK, S_IFREG } from '@zenfs/core/constants';
 import { withErrno } from 'kerium';
-import * as block_dev from '../block_dev.js';
-import { sectorSize } from '../block_dev.js';
+import * as block_dev from './block_dev.js';
+import { sectorSize } from './block_dev.js';
 import { modules } from '../module.js';
+import { processes } from '../process.js';
 import * as char_dev from './char_dev.js';
 import $pkg from '../../package.json' with { type: 'json' };
 
@@ -124,7 +125,7 @@ function show_status(ctx: FSContext): string {
 	const { uid, gid, euid, egid, suid, sgid, groups } = ctx.credentials;
 
 	return (
-		`Name:\tcontext\n` +
+		`Name:\t${processes.get(ctx.id)?.comm || 'context'}\n` +
 		`State:\tR (running)\n` +
 		`Tgid:\t${ctx.id}\n` +
 		`Pid:\t${ctx.id}\n` +
@@ -142,15 +143,23 @@ function show_status(ctx: FSContext): string {
 /** `/proc/<pid>`, generated for a context rather than stored */
 class ContextDir extends ProcDir {
 	public constructor(ctx: FSContext) {
+		const proc = () => processes.get(ctx.id);
+
 		super({
 			cwd: new ProcLink(() => ctx.pwd),
 			root: new ProcLink(() => ctx.root),
+			exe: new ProcLink(() => proc()?.exe ?? ''),
 			fd: new FdDir(ctx),
 			fdinfo: new FdInfoDir(ctx),
 			status: file(() => show_status(ctx)),
 			mounts: file(() => show_mounts(ctx)),
-			// Linux uses this for the command line, which a context doesn't have
-			comm: file(() => 'context\n'),
+			comm: file(() => (proc()?.comm || 'context') + '\n'),
+			cmdline: file(() => proc()?.argv.join('\0') ?? ''),
+			environ: file(() =>
+				Object.entries(proc()?.env ?? {})
+					.map(([key, value]) => `${key}=${value}\0`)
+					.join('')
+			),
 		});
 	}
 }
