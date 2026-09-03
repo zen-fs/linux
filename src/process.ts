@@ -23,6 +23,8 @@ export interface ProcessInit {
 
 export const processes = new Map<number, Process>();
 
+const kIsProcessExit = Symbol('process.exit');
+
 /** A process, basically the same as `struct task_struct` */
 export class Process {
 	/** The context this process runs in. Its id is the pid. */
@@ -125,4 +127,6 @@ export class Process {
 	public [Symbol.dispose](): void {
 		this.dispose();
 	}
+
+	static exit = Object.create(Object.assign(Object.create(null), { [kIsProcessExit]: true }));
 }

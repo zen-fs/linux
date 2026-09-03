@@ -59,7 +59,7 @@ const binfmt_js = {
 
 			for (const dir of [...jsLib, ...(env.LD_LIBRARY_PATH?.split(':') ?? [])]) {
 				const p = path.join(dir, specifier + '.js');
-				if (fs.existsSync.call(proc.context, p)) return make(fs.readFileSync.call(proc.context, p, 'utf-8'));
+				if (fs.existsSync.call(proc.context, p)) return make(p);
 			}
 
 			throw UV('ELIBACC', 'execve', filename);
@@ -76,7 +76,7 @@ const binfmt_js = {
 			noAggregateLoadErrors: true,
 		});
 
-		return () => compartment.import(filename);
+		return () => compartment.importNow(filename);
 	},
 } satisfies BinFmt;
 
