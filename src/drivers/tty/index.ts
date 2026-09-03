@@ -2,7 +2,7 @@
 import { Module } from '../../module.js';
 import { console_driver, set_console } from './console.js';
 import { attach_stdio, node_driver, probe_stdio } from './node.js';
-import { xterm_driver, xterm_platform_driver } from './xterm.js';
+import { xterm_driver, xterm_platform_driver_exit, xterm_platform_driver_init } from './xterm.js';
 
 export * from './console.js';
 export * from './n_tty.js';
@@ -13,7 +13,7 @@ export * from './xterm.js';
 
 /** Undo everything `init` set up, in the reverse order */
 function unregister_drivers(): void {
-	xterm_platform_driver.unregister();
+	xterm_platform_driver_exit();
 	for (const driver of [node_driver, xterm_driver, console_driver]) driver.unregister();
 }
 
@@ -44,8 +44,7 @@ export const tty = new Module({
 
 		if (tty.param<boolean>('probe') && probe_stdio()) set_console(attach_stdio());
 
-		xterm_platform_driver.owner = tty;
-		xterm_platform_driver.register();
+		xterm_platform_driver_init(tty).register();
 	},
 	exit() {
 		set_console(null);

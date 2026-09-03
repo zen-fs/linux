@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
+import type { Module } from '../../module.js';
+import type { PlatformDevice } from '../base/platform.js';
 import { PlatformDriver } from '../base/platform.js';
 import type { DeviceTreeNode } from '../of/device_tree.js';
 import { console_tty, set_console } from './console.js';
@@ -95,19 +97,34 @@ function free_index(): number {
 	throw withErrno('ENOSPC', 'xterm: no free lines');
 }
 
-export const xterm_platform_driver: PlatformDriver = new PlatformDriver({
-	name: 'xterm',
-	of_match_table: ['xterm'],
-	probe(device) {
-		const node: DeviceTreeNode | undefined = device.of_node;
-		if (node?.kind != 'xterm') return false;
+function xterm_probe(device: PlatformDevice): boolean {
+	const node: DeviceTreeNode | undefined = device.of_node;
+	if (node?.kind != 'xterm') return false;
 
-		device.driver_data = attach_xterm(node.terminal, { index: free_index(), ...node.options });
-		return true;
-	},
-	remove(device) {
-		const tty = device.driver_data as TTY | undefined;
-		if (tty) detach_xterm(tty);
-		delete device.driver_data;
-	},
-});
+	device.driver_data = attach_xterm(node.terminal, { index: free_index(), ...node.options });
+	return true;
+}
+
+function xterm_remove(device: PlatformDevice): void {
+	const tty = device.driver_data as TTY | undefined;
+	if (tty) detach_xterm(tty);
+	delete device.driver_data;
+}
+
+/**
+ * What binds a `kind: 'xterm'` device tree node to a terminal.
+ * Created when the tty module loads, since the platform bus does not exist before then.
+ */
+export let xterm_platform_driver: PlatformDriver | undefined;
+
+/** @internal */
+export function xterm_platform_driver_init(owner: Module): PlatformDriver {
+	xterm_platform_driver = new PlatformDriver({ name: 'xterm', owner, of_match_table: ['xterm'], probe: xterm_probe, remove: xterm_remove });
+	return xterm_platform_driver;
+}
+
+/** @internal */
+export function xterm_platform_driver_exit(): void {
+	xterm_platform_driver?.unregister();
+	xterm_platform_driver = undefined;
+}
