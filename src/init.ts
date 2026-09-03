@@ -46,6 +46,9 @@ export const initConfig: InitConfig = {
 	loglevel: Level.INFO,
 };
 
+/** What `quiet` turns the console down to, i.e. `CONSOLE_LOGLEVEL_QUIET` */
+const loglevel_quiet = Level.ERR;
+
 /** One argument: a run of non-space characters, with anything in quotes kept together */
 const arg_pattern = /(?:[^\s"]|"[^"]*")+/g;
 
@@ -60,7 +63,7 @@ function known_param(param: string, val?: string): boolean {
 			initConfig.argv.length = 1;
 			return true;
 		case 'quiet':
-			initConfig.loglevel = Level.ERR;
+			initConfig.loglevel = loglevel_quiet;
 			return true;
 		case 'debug':
 			initConfig.loglevel = Level.DEBUG;
@@ -180,7 +183,11 @@ function flush_kernel_log(): void {
 }
 
 export async function init(options: InitOptions = {}): Promise<Process> {
-	Object.assign(initConfig, options);
+	const { env, ...rest } = options;
+	Object.assign(initConfig, rest);
+	Object.assign(initConfig.env, env);
+	if (options.quiet) initConfig.loglevel = loglevel_quiet;
+
 	parse_cmdline(options.cmdline ?? '');
 
 	kobj_init();
