@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { withErrno } from 'kerium';
+import { PlatformDriver } from '../base/platform.js';
+import type { DeviceTreeNode } from '../of/device_tree.js';
 import { console_tty, set_console } from './console.js';
 import type { TTY, WinSize } from './tty.js';
 import { TTYDriver } from './tty.js';
@@ -82,4 +84,30 @@ export function detach_xterm(tty: TTY): void {
 	xterm_driver.ops.shutdown?.(tty);
 	tty.unregister();
 	xterm_driver.ttys.delete(tty.index);
+	if (console_tty === tty) set_console(null);
 }
+
+/** The lowest line nothing has taken yet, since a device tree node doesn't have to say which it wants */
+function free_index(): number {
+	for (let index = 0; index < xterm_driver.lines; index++) {
+		if (!xterm_driver.ttys.has(index)) return index;
+	}
+	throw withErrno('ENOSPC', 'xterm: no free lines');
+}
+
+export const xterm_platform_driver: PlatformDriver = new PlatformDriver({
+	name: 'xterm',
+	of_match_table: ['xterm'],
+	probe(device) {
+		const node: DeviceTreeNode | undefined = device.of_node;
+		if (node?.kind != 'xterm') return false;
+
+		device.driver_data = attach_xterm(node.terminal, { index: free_index(), ...node.options });
+		return true;
+	},
+	remove(device) {
+		const tty = device.driver_data as TTY | undefined;
+		if (tty) detach_xterm(tty);
+		delete device.driver_data;
+	},
+});

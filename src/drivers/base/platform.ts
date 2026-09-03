@@ -2,6 +2,7 @@
 import { pick } from 'utilium';
 import { Device } from '../../device.js';
 import type { Resource } from '../../resources.js';
+import { of_match_device } from '../of/device_tree.js';
 import { BusType } from './bus.js';
 import { DeviceDriver, type DeviceDriverInit } from './driver.js';
 
@@ -53,6 +54,8 @@ export class PlatformDriver extends DeviceDriver<PlatformDevice> {
 
 function platform_match(dev: PlatformDevice, drv: PlatformDriver): boolean {
 	if (dev.driver_override) return dev.driver_override === drv.name;
+
+	if (of_match_device(drv.of_match_table, dev)) return true;
 
 	if (drv.id_table)
 		for (const id of drv.id_table)

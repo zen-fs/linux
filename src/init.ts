@@ -1,16 +1,15 @@
 import { configure, defaultContext, InMemory } from '@zenfs/core';
 import { withErrno } from 'kerium';
 import { emerg, err, fancy, info } from 'kerium/log';
+import { of_platform_populate } from './drivers/of/device_tree.js';
 import { driver_init } from './drivers/base/init.js';
 import { char_dev_init } from './drivers/char/mem.js';
-import { set_console } from './drivers/tty/console.js';
 import { tty } from './drivers/tty/index.js';
-import type { TTY } from './drivers/tty/tty.js';
 import { web_storage } from './drivers/webstorage/index.js';
-import { execve } from './fs/exec.js';
 import { ConfigFS } from './fs/configfs.js';
 import { DebugFS } from './fs/debugfs.js';
 import { DevTmpFS } from './fs/devtmpfs.js';
+import { execve } from './fs/exec.js';
 import { ProcFS } from './fs/procfs.js';
 import { SysFS } from './fs/sysfs.js';
 import { kobj_init } from './kobject.js';
@@ -26,7 +25,6 @@ const envp_init: Record<string, string> = { HOME: '/', TERM: 'linux' };
 const init_paths: string[] = ['/sbin/init', '/etc/init', '/bin/init', '/bin/sh'];
 
 export interface InitOptions {
-	console?: TTY | (() => TTY);
 	init?: string;
 	argv?: string[];
 	env?: Record<string, string>;
@@ -70,13 +68,11 @@ export async function init(options: InitOptions = {}): Promise<Process> {
 		},
 	});
 
+	of_platform_populate();
+
 	// Built-in modules
 	await tty.init();
 	await web_storage.init();
-
-	// The console has to be up before init writes anything to it
-	// @todo replace with ACPI/BIOS device tree stuff
-	if (options.console) set_console(typeof options.console == 'function' ? options.console() : options.console);
 
 	const argv = options.argv ?? argv_init;
 

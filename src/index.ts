@@ -18,6 +18,7 @@ export * from './drivers/base/memory.js';
 export * from './drivers/base/node.js';
 export * from './drivers/base/platform.js';
 
+export * from './drivers/of/device_tree.js';
 export * from './drivers/char/mem.js';
 export * from './drivers/tty/index.js';
 export * from './drivers/webstorage/index.js';

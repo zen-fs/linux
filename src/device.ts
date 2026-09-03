@@ -4,6 +4,7 @@ import { _throw, pick } from 'utilium';
 import type { BusType } from './drivers/base/bus.js';
 import type { Class } from './drivers/base/class.js';
 import type { DeviceDriver } from './drivers/base/driver.js';
+import type { DeviceTreeNode } from './drivers/of/device_tree.js';
 import type { Attribute, UEventEnv } from './kobject.js';
 import { KObject, sysfs_create_link, sysfs_remove_link } from './kobject.js';
 import type { DevicePowerInfo } from './power.js';
@@ -83,7 +84,13 @@ export class DeviceKObject extends KObject {
 	}
 
 	uevent(env: UEventEnv): void {
-		const { bus, class: cls, type, dev_t, driver } = this.device;
+		const { bus, class: cls, type, dev_t, driver, of_node } = this.device;
+
+		if (of_node) {
+			env.OF_NAME = this.device.name;
+			env.OF_COMPATIBLE_0 = of_node.kind;
+			env.MODALIAS = 'of:N' + of_node.kind;
+		}
 
 		if (bus) env.SUBSYSTEM = bus.name;
 		if (cls) env.SUBSYSTEM = cls.name;
@@ -100,7 +107,9 @@ export class DeviceKObject extends KObject {
 	}
 }
 
-export interface DeviceInit extends Partial<Pick<Device, 'name' | 'parent' | 'id' | 'bus' | 'driver' | 'type' | 'class' | 'dev_t' | 'kobj_parent'>> {}
+export interface DeviceInit extends Partial<
+	Pick<Device, 'name' | 'parent' | 'id' | 'bus' | 'driver' | 'type' | 'class' | 'dev_t' | 'kobj_parent' | 'of_node'>
+> {}
 
 function class_dir(name: string, parent: KObject): KObject {
 	const existing = parent.children.get(name);
@@ -109,7 +118,7 @@ function class_dir(name: string, parent: KObject): KObject {
 	return new KObject(name, parent);
 }
 
-export class Device {
+export class Device<TData = unknown> {
 	public name!: string;
 
 	public parent?: Device | null;
@@ -123,6 +132,12 @@ export class Device {
 
 	/** The device number. Devices with one get a `dev` attribute and a link in `/sys/dev`. */
 	public dev_t?: DevT;
+
+	/** The device tree node this device was created from, i.e. `dev->of_node` */
+	public of_node?: DeviceTreeNode;
+
+	/** Whatever the bound driver wants to keep with the device, i.e. `dev->driver_data` */
+	public driver_data?: TData;
 
 	/**
 	 * Forces where the device goes in sysfs, like setting `dev->kobj.parent` before `register`.
@@ -144,7 +159,7 @@ export class Device {
 
 		if (!init.name) throw withErrno('EINVAL');
 
-		Object.assign(this, pick(init, 'name', 'parent', 'id', 'bus', 'driver', 'type', 'class', 'dev_t', 'kobj_parent'));
+		Object.assign(this, pick(init, 'name', 'parent', 'id', 'bus', 'driver', 'type', 'class', 'dev_t', 'kobj_parent', 'of_node'));
 	}
 
 	/** Whether the device is currently in sysfs */

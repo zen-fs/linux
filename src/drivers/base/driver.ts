@@ -5,6 +5,7 @@ import type { Device, DeviceAttribute } from '../../device.js';
 import type { Attribute } from '../../kobject.js';
 import { KObject, sysfs_create_link, sysfs_remove_link } from '../../kobject.js';
 import { find_module, type Module } from '../../module.js';
+import type { DeviceTreeKind } from '../of/device_tree.js';
 import type { BusType } from './bus.js';
 
 export interface DriverAttribute extends Attribute {}
@@ -20,6 +21,12 @@ export interface DeviceDriverInit<TDevice extends Device = Device> {
 
 	/** Don't add the `bind` and `unbind` attributes */
 	disableSysfsBind?: boolean;
+
+	/**
+	 * The device tree node kinds this driver handles, i.e. `driver->of_match_table`.
+	 * A kind is our equivalent of `compatible`.
+	 */
+	of_match_table?: readonly DeviceTreeKind[];
 
 	attrs?: Record<string, DriverAttribute>;
 	dev_attrs?: Record<string, DeviceAttribute>;
@@ -51,13 +58,16 @@ export class DeviceDriver<TDevice extends Device = Device> {
 	/** Don't add the `bind` and `unbind` attributes */
 	public disableSysfsBind?: boolean;
 
+	/** The device tree node kinds this driver handles, i.e. `driver->of_match_table` */
+	public readonly of_match_table?: readonly DeviceTreeKind[];
+
 	public readonly attrs: Record<string, DriverAttribute>;
 	public readonly dev_attrs: Record<string, DeviceAttribute>;
 
 	constructor(init: DeviceDriverInit<TDevice>) {
 		if (!init.name || !init.bus) throw withErrno('EINVAL');
 
-		Object.assign(this, pick(init, 'name', 'bus', 'owner', 'mod_name', 'disableSysfsBind'));
+		Object.assign(this, pick(init, 'name', 'bus', 'owner', 'mod_name', 'disableSysfsBind', 'of_match_table'));
 
 		this.attrs = init.attrs ?? {};
 		this.dev_attrs = init.dev_attrs ?? {};
