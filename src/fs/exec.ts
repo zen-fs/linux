@@ -3,7 +3,7 @@ import { fs } from '@zenfs/core';
 import { O_RDONLY, X_OK } from '@zenfs/core/constants';
 import { UV } from 'kerium';
 import type { ProcessInit } from '../process.js';
-import { Process } from '../process.js';
+import { Process, set_current } from '../process.js';
 import binfmt_js from './binfmt_js.js';
 
 export const binPrmBufSize = 256;
@@ -61,11 +61,15 @@ export function execve(proc: Process, path: string, argv: string[] = [path], env
 
 	const do_exec = search_binary_handler({ proc, filename, buf: buffer.subarray(0, read), argv, env: proc.env });
 
+	const previous = set_current(proc);
+
 	try {
 		// Linux returns to userspace here and the program runs on its own; nothing here can do that.
 		do_exec();
 	} catch (e) {
 		if (e !== Process.exit) throw e;
+	} finally {
+		set_current(previous);
 	}
 
 	return proc.code ?? 0;

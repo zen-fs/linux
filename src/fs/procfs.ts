@@ -7,7 +7,7 @@ import * as block_dev from './block_dev.js';
 import { sectorSize } from './block_dev.js';
 import { initConfig } from '../init.js';
 import { modules } from '../module.js';
-import { processes } from '../process.js';
+import { current, processes } from '../process.js';
 import * as char_dev from './char_dev.js';
 import $pkg from '../../package.json' with { type: 'json' };
 
@@ -229,21 +229,9 @@ function show_uptime(): string {
 	return `${up.toFixed(2)} ${(up * (navigator.hardwareConcurrency || 1)).toFixed(2)}\n`;
 }
 
-/**
- * Which context `/proc/self` points at.
- *
- * A file system never finds out who is asking, so this can't follow the caller the way Linux does.
- * It is the default context unless something sets it.
- * @todo Point at the calling context if contexts reach the file system layer
- * @internal
- */
-export let self_context: FSContext = defaultContext;
-
-/**
- * Set the context `/proc/self` resolves to.
- */
-export function set_self_context(ctx: FSContext): void {
-	self_context = ctx;
+/** The context of whoever is asking, which is what `/proc/self` points at. */
+function self(): FSContext {
+	return current?.context ?? defaultContext;
 }
 
 /**
@@ -269,12 +257,12 @@ class ProcRoot extends ProcDir {
  * @internal
  */
 export const proc_root: ProcRoot = new ProcRoot({
-	self: new ProcLink(() => String(self_context.id)),
+	self: new ProcLink(() => String(self().id)),
 	cmdline: file(() => initConfig._saved + '\n'),
 	devices: file(show_devices),
-	filesystems: file(() => show_filesystems(self_context)),
+	filesystems: file(() => show_filesystems(self())),
 	modules: file(show_modules),
-	mounts: file(() => show_mounts(self_context)),
+	mounts: file(() => show_mounts(self())),
 	partitions: file(show_partitions),
 	uptime: file(show_uptime),
 	version: file(() => `ZenFS (@zenfs/linux) version ${$pkg.version} (core ${_version})`),

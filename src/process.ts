@@ -23,6 +23,15 @@ export interface ProcessInit {
 
 export const processes = new Map<number, Process>();
 
+/** The process that is running right now, i.e. what `current` points at in Linux. */
+export let current: Process | undefined;
+
+export function set_current(proc: Process | undefined): Process | undefined {
+	const previous = current;
+	current = proc;
+	return previous;
+}
+
 const kIsProcessExit = Symbol('process.exit');
 
 /** A process, basically the same as `struct task_struct` */
