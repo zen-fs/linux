@@ -1,7 +1,7 @@
 # ZenFS Backends and Emulation of Linux
 
 > [!CAUTION]
-> This is still being developed. Most APIs will likely change a lot or have not been implemented yet.
+> This is still being developed and the API is not completely stable yet.
 
 This package serves as a best-effort emulation of Linux-specific behavior for ZenFS.
 
