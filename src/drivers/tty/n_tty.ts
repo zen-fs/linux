@@ -2,8 +2,7 @@
 import { Signal } from '../../signal.js';
 import type { TTY } from './tty.js';
 import { cc, iflags, lflags, oflags } from './termios.js';
-
-const encoder = new TextEncoder();
+import { encodeUTF8 } from 'utilium';
 
 /** The characters that raise a signal and what each one raises, like the `__isig` switch */
 const signal_chars: [index: number, signal: Signal][] = [
@@ -173,6 +172,6 @@ export class LineDiscipline {
 
 	/** Put text into the input queue as if it had been typed, i.e. `TIOCSTI` */
 	public push(text: string): void {
-		this.receive(encoder.encode(text));
+		this.receive(encodeUTF8(text));
 	}
 }

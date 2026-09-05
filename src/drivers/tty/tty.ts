@@ -12,8 +12,7 @@ import { Class } from '../base/class.js';
 import { LineDiscipline } from './n_tty.js';
 import type { Termios } from './termios.js';
 import { default_termios, iflags, lflags, oflags, tcflush } from './termios.js';
-
-const encoder = new TextEncoder();
+import { encodeUTF8 } from 'utilium';
 
 /** What a tty is driving, i.e. `enum tty_driver_type` */
 export type TTYDriverType = 'system' | 'console' | 'serial' | 'pty';
@@ -141,7 +140,7 @@ export class TTY {
 	 * Call this from whatever is driving the tty when the user types something.
 	 */
 	public receive(data: Uint8Array | string): void {
-		this.ldisc.receive(typeof data == 'string' ? encoder.encode(data) : data);
+		this.ldisc.receive(typeof data == 'string' ? encodeUTF8(data) : data);
 	}
 
 	/** Start using the terminal, i.e. the `open` half of `tty_operations` */

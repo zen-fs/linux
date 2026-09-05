@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import type { FSContext, InodeLike } from '@zenfs/core';
-import { _version, boundContexts, defaultContext, FileSystem, Inode, Sync } from '@zenfs/core';
-import { S_IFDIR, S_IFLNK, S_IFREG } from '@zenfs/core/constants';
+import type { FSContext } from '@zenfs/core';
+import { _version, boundContexts, defaultContext } from '@zenfs/core';
 import { withErrno } from 'kerium';
-import * as block_dev from './block_dev.js';
-import { sectorSize } from './block_dev.js';
+import $pkg from '../../package.json' with { type: 'json' };
 import { initConfig } from '../init.js';
 import { modules } from '../module.js';
 import { current, processes } from '../process.js';
+import * as block_dev from './block_dev.js';
+import { sectorSize } from './block_dev.js';
 import * as char_dev from './char_dev.js';
-import $pkg from '../../package.json' with { type: 'json' };
+import { KernelFS } from './kernfs.js';
 
 /** A file in procfs. Unlike sysfs attributes, most of these are generated wholesale when read. */
 export interface ProcFile {
@@ -26,6 +26,10 @@ export interface ProcFile {
 export class ProcLink {
 	public readonly mode = 0o777;
 	public constructor(public readonly target: () => string) {}
+
+	public get contents(): string {
+		return this.target();
+	}
 }
 
 /**
@@ -269,148 +273,40 @@ export const proc_root: ProcRoot = new ProcRoot({
 });
 
 /**
- * Resolve a path in procfs.
- * @returns `null` if nothing exists at `path`
- * @throws ENOTDIR when part of `path` is used as a directory but isn't one
- */
-export function proc_lookup(path: string): ProcEntry | null {
-	let current: ProcEntry = proc_root;
-
-	for (const part of path.split('/').filter(p => p)) {
-		if (current instanceof ProcLink) {
-			const target: string = current.target();
-			const resolved: ProcEntry | undefined = target.startsWith('/') ? undefined : proc_root.lookup(target);
-			if (!resolved) throw withErrno('ENOTDIR');
-			current = resolved;
-		}
-
-		if (!(current instanceof ProcDir)) throw withErrno('ENOTDIR');
-
-		const next = current.lookup(part);
-		if (!next) return null;
-		current = next;
-	}
-
-	return current;
-}
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-/** The contents of an entry, or `null` when it doesn't have any (i.e. it is a directory) */
-function contents_of(entry: ProcEntry): string | null {
-	if (entry instanceof ProcDir) return null;
-	if (entry instanceof ProcLink) return entry.target();
-	return entry.show();
-}
-
-/**
  * A view of ZenFS' contexts and of the kernel emulation, laid out the way Linux lays out `/proc`.
  * @see https://www.kernel.org/doc/html/latest/filesystems/proc.html
  */
-export class ProcFS extends Sync(FileSystem) {
-	protected readonly initTime = Date.now();
-
-	protected _nextIno = 1;
-
-	protected _inodes = new Map<string, Inode>();
-
+export class ProcFS extends KernelFS<ProcDir, ProcFile, ProcLink> {
 	public constructor() {
-		super(0x9fa0, 'proc');
+		super(0x9fa0, 'proc', true);
 	}
 
-	protected _lookup(path: string): ProcEntry {
-		const entry = proc_lookup(path);
-		if (!entry) throw withErrno('ENOENT');
-		return entry;
+	protected lookup(path: string): ProcEntry | null {
+		let current: ProcEntry = proc_root;
+
+		for (const part of path.split('/').filter(p => p)) {
+			if (current instanceof ProcLink) {
+				const target: string = current.target();
+				const resolved: ProcEntry | undefined = target.startsWith('/') ? undefined : proc_root.lookup(target);
+				if (!resolved) throw withErrno('ENOTDIR');
+				current = resolved;
+			}
+
+			if (!(current instanceof ProcDir)) throw withErrno('ENOTDIR');
+
+			const next = current.lookup(part);
+			if (!next) return null;
+			current = next;
+		}
+
+		return current;
 	}
 
-	private _getInode(path: string, entry: ProcEntry): Inode {
-		let inode = this._inodes.get(path);
-		if (inode) return inode;
-
-		inode = new Inode({
-			ino: this._nextIno++,
-			data: this._nextIno++,
-			atimeMs: this.initTime,
-			mtimeMs: this.initTime,
-			ctimeMs: this.initTime,
-			birthtimeMs: this.initTime,
-			size: 0,
-			nlink: 1,
-			mode: (entry instanceof ProcDir ? S_IFDIR : entry instanceof ProcLink ? S_IFLNK : S_IFREG) | entry.mode,
-		});
-
-		this._inodes.set(path, inode);
-		return inode;
+	protected is_dir(entry: ProcEntry): entry is ProcDir {
+		return entry instanceof ProcDir;
 	}
 
-	public renameSync(): void {
-		throw withErrno('EPERM');
-	}
-
-	public statSync(path: string): InodeLike {
-		const entry = this._lookup(path);
-		const inode = this._getInode(path, entry);
-
-		const contents = contents_of(entry);
-		inode.size = contents === null ? 0 : encoder.encode(contents).byteLength;
-
-		return inode;
-	}
-
-	public touchSync(path: string, metadata: Partial<InodeLike>): void {
-		this._getInode(path, this._lookup(path)).update(metadata);
-	}
-
-	public createFileSync(): InodeLike {
-		throw withErrno('EACCES');
-	}
-
-	public unlinkSync(): void {
-		throw withErrno('EPERM');
-	}
-
-	public rmdirSync(): void {
-		throw withErrno('EPERM');
-	}
-
-	public mkdirSync(): InodeLike {
-		throw withErrno('EPERM');
-	}
-
-	public readdirSync(path: string): string[] {
-		const entry = this._lookup(path);
-		if (!(entry instanceof ProcDir)) throw withErrno('ENOTDIR');
-		return Array.from(entry.keys());
-	}
-
-	public linkSync(): void {
-		throw withErrno('EPERM');
-	}
-
-	public syncSync(): void {
-		return;
-	}
-
-	public readSync(path: string, buffer: Uint8Array, start: number, end: number): void {
-		const entry = this._lookup(path);
-
-		const contents = contents_of(entry);
-		if (contents === null) throw withErrno('EISDIR');
-
-		const data = encoder.encode(contents).subarray(start, end);
-		buffer.set(data.subarray(0, buffer.byteLength));
-	}
-
-	public writeSync(path: string, buffer: Uint8Array, offset: number): void {
-		const entry = this._lookup(path);
-
-		if (entry instanceof ProcDir) throw withErrno('EISDIR');
-		if (entry instanceof ProcLink) throw withErrno('EPERM');
-		if (!entry.store) throw withErrno('EACCES');
-		if (offset) throw withErrno('EINVAL');
-
-		entry.store(decoder.decode(buffer));
+	protected is_link(entry: ProcEntry): entry is ProcLink {
+		return entry instanceof ProcLink;
 	}
 }

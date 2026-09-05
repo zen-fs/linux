@@ -13,6 +13,8 @@ let root: KObject | undefined;
  * Unlike Linux, we don't use ksets, ktypes, or attribute groups.
  */
 export class KObject {
+	public readonly mode: number = 0o555;
+
 	public children = new Map<string, KEntry>();
 
 	/**
@@ -174,6 +176,8 @@ export interface KObjectAttribute extends Attribute {}
  * Like on Linux, links are always relative to the directory they are in.
  */
 export class KLink {
+	public readonly mode: number = 0o777;
+
 	constructor(
 		public readonly name: string,
 		public readonly parent: KObject,
