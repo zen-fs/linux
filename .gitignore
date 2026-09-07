@@ -3,8 +3,7 @@ dist
 docs
 *.log
 tmp
-tests/.coverage
-.tmp.*
+
 .*
 !.vscode
 !.github
