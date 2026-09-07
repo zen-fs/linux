@@ -229,7 +229,11 @@ function show_uptime(): string {
 	return `${up.toFixed(2)} ${(up * (navigator.hardwareConcurrency || 1)).toFixed(2)}\n`;
 }
 
-/** The context of whoever is asking, which is what `/proc/self` points at. */
+/**
+ * The context of whoever is asking, which is what `/proc/self` points at.
+ * Built on {@link current}, so it is only meaningful synchronously: across an `await` it falls back
+ * to `defaultContext`. `/proc/<pid>` (`ContextDir`) is unaffected, since it takes an explicit context.
+ */
 function self(): FSContext {
 	return current?.context ?? defaultContext;
 }

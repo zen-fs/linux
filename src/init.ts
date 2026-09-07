@@ -12,7 +12,7 @@ import { web_storage } from './drivers/webstorage/index.js';
 import { ConfigFS } from './fs/configfs.js';
 import { DebugFS } from './fs/debugfs.js';
 import { DevTmpFS } from './fs/devtmpfs.js';
-import { execve } from './fs/exec.js';
+import { execve, execve_async } from './fs/exec.js';
 import { ProcFS } from './fs/procfs.js';
 import { SysFS } from './fs/sysfs.js';
 import { kobj_init } from './kobject.js';
@@ -182,7 +182,8 @@ function flush_kernel_log(): void {
 	for (const line of pending.splice(0)) console_tty.write(encodeUTF8(line + '\n'));
 }
 
-export async function init(options: InitOptions = {}): Promise<Process> {
+/** Everything up through mounting the pseudo-filesystems and bringing up built-in modules, shared by `init` and `init_async`. */
+async function boot(options: InitOptions): Promise<Process> {
 	const { env, ...rest } = options;
 	Object.assign(initConfig, rest);
 	Object.assign(initConfig.env, env);
@@ -226,7 +227,11 @@ export async function init(options: InitOptions = {}): Promise<Process> {
 	flush_kernel_log();
 	await web_storage.init();
 
-	const proc = new Process({ context: defaultContext, argv: initConfig.argv, env: { ...initConfig.env } });
+	return new Process({ context: defaultContext, argv: initConfig.argv, env: { ...initConfig.env } });
+}
+
+export async function init(options: InitOptions = {}): Promise<Process> {
+	const proc = await boot(options);
 
 	function run_init_process(filename: string): void {
 		info(`Run ${filename} as init process`);
@@ -244,6 +249,39 @@ export async function init(options: InitOptions = {}): Promise<Process> {
 	for (const filename of init_paths)
 		try {
 			run_init_process(filename);
+			return proc;
+		} catch (e) {
+			if (code_of(e) != 'ENOENT') err(`Starting init: ${filename} exists but couldn't execute it (${code_of(e)})`);
+		}
+
+	panic('No working init found. Pass one with `init=`.');
+}
+
+/**
+ * Async form of {@link init}, for an init program that genuinely can't load synchronously
+ * (e.g. one that awaits terminal input, as `BinFmt.load` may now do - see {@link execve_async}).
+ * Resolves once init exits, which matches Linux, where init not exiting is the normal case;
+ * hold the returned {@link Process} to act on it before then.
+ */
+export async function init_async(options: InitOptions = {}): Promise<Process> {
+	const proc = await boot(options);
+
+	async function run_init_process(filename: string): Promise<void> {
+		info(`Run ${filename} as init process`);
+		await execve_async(proc, filename, [filename, ...initConfig.argv.slice(1)], proc.env);
+	}
+
+	if (initConfig.init)
+		try {
+			await run_init_process(initConfig.init);
+			return proc;
+		} catch (e) {
+			panic(`Requested init ${initConfig.init} failed (${code_of(e)})`);
+		}
+
+	for (const filename of init_paths)
+		try {
+			await run_init_process(filename);
 			return proc;
 		} catch (e) {
 			if (code_of(e) != 'ENOENT') err(`Starting init: ${filename} exists but couldn't execute it (${code_of(e)})`);

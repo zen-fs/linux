@@ -25,13 +25,44 @@ export interface ProcessInit {
 
 export const processes = new Map<number, Process>();
 
-/** The process that is running right now, i.e. what `current` points at in Linux. */
+/**
+ * The process that is running right now, i.e. what `current` points at in Linux.
+ *
+ * Only meaningful synchronously: across an `await`, other processes may run and change this,
+ * so anything that needs the process after an await must hold its own reference instead.
+ * `/proc/self` ({@link "./fs/procfs.js".self}) is built on this and inherits the same limit.
+ */
 export let current: Process | undefined;
 
 export function set_current(proc: Process | undefined): Process | undefined {
 	const previous = current;
 	current = proc;
 	return previous;
+}
+
+/**
+ * Run `fn` with `proc` as {@link current}.
+ * `current` is only meaningful synchronously: across an `await` other processes may run,
+ * so anything needing the process after an await must hold its own reference.
+ *
+ * `proc` is also marked as exiting-capable ({@link Process.set_exiting}) only while a synchronous
+ * segment of `fn` is actually running on this call stack - cleared before every `await`, the same
+ * way `current` is - so a signal delivered to `proc` while it is merely suspended disposes it
+ * instead of mistakenly unwinding a stack that isn't there.
+ */
+export async function run_in<T>(proc: Process, fn: () => T | Promise<T>): Promise<T> {
+	const previous = set_current(proc);
+	proc.set_exiting(true);
+	try {
+		const result = fn();
+		if (!(result instanceof Promise)) return result;
+		set_current(previous); // yield the slot before awaiting
+		proc.set_exiting(false);
+		return await result;
+	} finally {
+		proc.set_exiting(false);
+		set_current(previous);
+	}
 }
 
 const kIsProcessExit = Symbol('process.exit');
@@ -63,6 +94,20 @@ export class Process {
 
 	/** Whether a job control signal has stopped the process, like `JOBCTL_STOPPED` */
 	public stopped: boolean = false;
+
+	/**
+	 * Whether this process' program is presently running on the call stack that reaches here,
+	 * i.e. whether unwinding via {@link Process.exit} (rather than disposing directly) is how
+	 * a fatal signal has to take it down. Set by `execve`/`execve_async` around `do_exec()`.
+	 * This exists instead of an `current === this` check so it stays correct across an `await`,
+	 * where {@link current} is not reliable (see {@link run_in}).
+	 */
+	#exiting: boolean = false;
+
+	/** @internal used by `execve`/`execve_async` to bracket running this process' program */
+	public set_exiting(value: boolean): void {
+		this.#exiting = value;
+	}
 
 	/**
 	 * What the process has asked to be told about, like `struct sighand_struct`.
@@ -169,7 +214,7 @@ export class Process {
 			case 'core':
 				this.killed_by = sig;
 				this.code = 128 + sig;
-				if (current === this) throw Process.exit;
+				if (this.#exiting) throw Process.exit;
 				this.dispose();
 				return true;
 		}

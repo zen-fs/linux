@@ -137,6 +137,33 @@ export class TTY {
 	}
 
 	/**
+	 * Resolves once there is input to read, i.e. an awaitable `add_wait_queue`.
+	 * Resolves immediately if there is already something to read or the terminal has hit EOF,
+	 * so a reader is never left waiting on a terminal that has nothing left to give it.
+	 * Rejects with `signal`'s reason if it aborts before then.
+	 */
+	public readable(signal?: AbortSignal): Promise<void> {
+		if (this.available > 0 || this.ldisc.at_eof) return Promise.resolve();
+		// eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- propagating the signal's own reason, like `throwIfAborted`
+		if (signal?.aborted) return Promise.reject(signal.reason);
+
+		return new Promise((resolve, reject) => {
+			const stop_waiting = this.wait_read(() => {
+				if (signal) signal.removeEventListener('abort', on_abort);
+				resolve();
+			});
+
+			const on_abort = (): void => {
+				stop_waiting();
+				// eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- propagating the signal's own reason, like `throwIfAborted`
+				reject(signal?.reason);
+			};
+
+			if (signal) signal.addEventListener('abort', on_abort, { once: true });
+		});
+	}
+
+	/**
 	 * Take bytes from the terminal.
 	 * Call this from whatever is driving the tty when the user types something.
 	 */
