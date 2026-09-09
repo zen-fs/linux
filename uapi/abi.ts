@@ -184,7 +184,7 @@ export function write_dirents(into: Uint8Array, entries: readonly DirentFields[]
 export function read_dirents(from: Uint8Array): DirentFields[] {
 	const entries: DirentFields[] = [];
 
-	for (let offset = 0; offset + direntNameOffset < from.byteLength; ) {
+	for (let offset = 0; offset + direntNameOffset < from.byteLength;) {
 		const dirent = new Dirent64(from.buffer, from.byteOffset + offset);
 		const reclen = dirent.reclen;
 		if (!reclen) break;
