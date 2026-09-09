@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { InodeLike } from '@zenfs/core';
-import { InMemoryStore, InodeFlags, StoreFS, isBlockDevice, isCharacterDevice } from '@zenfs/core';
-import type { IoctlContext } from '@zenfs/core/internal/ioctl.js';
+import { InMemoryStore, InodeFlags, isBlockDevice, isCharacterDevice, StoreFS } from '@zenfs/core';
 import { S_IFBLK, S_IFCHR } from '@zenfs/core/constants';
+import type { IoctlContext } from '@zenfs/core/internal/ioctl';
 import { dirname } from '@zenfs/core/path';
 import { withErrno } from 'kerium';
 import type { Device, DevT } from '../device.js';
-import { is_block_dev, toDev, fromDev } from '../device.js';
+import { fromDev, is_block_dev, toDev } from '../device.js';
+import type { WaitQueue } from '../wait.js';
 import * as block_dev from './block_dev.js';
 import * as char_dev from './char_dev.js';
 
@@ -34,12 +35,30 @@ export type DeviceIoctl = (context: IoctlContext, file: DeviceFile, ...args: any
 export interface FileOperations {
 	open?: (file: DeviceFile) => void;
 	release?: (file: DeviceFile) => void;
-	// There is no way to report a short read, since `FileSystem.read` doesn't have one either.
-	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => void;
+	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => number | void;
 	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
 	sync?: (file: DeviceFile) => void;
+	/**
+	 * Which of {@link EPOLLIN} and {@link EPOLLOUT} the device is ready for right now, i.e. the mask
+	 * `f_op->poll` gives back. Without this a device is always taken to be ready.
+	 */
+	poll?: (file: DeviceFile) => number;
+	/**
+	 * What to sleep on until that changes, i.e. the queue `poll_wait` registers on.
+	 * A device with one is a device a read can block on.
+	 */
+	poll_wait?: (file: DeviceFile) => WaitQueue | undefined;
 	ioctl?: Record<number, DeviceIoctl>;
 }
+
+/** There is something to read, i.e. `EPOLLIN` */
+export const EPOLLIN = 0x001;
+
+/** A write would not block, i.e. `EPOLLOUT` */
+export const EPOLLOUT = 0x004;
+
+/** A device file together with what its driver does, which is what a `f_op` is called with */
+export type DeviceFileWithOps = DeviceFile & { ops: FileOperations };
 
 /**
  * The devtmpfs nodes are created in, like Linux's `mnt`.
@@ -150,7 +169,7 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 	 * @param inode The node's inode, for callers that already have an authoritative one
 	 * @throws ENXIO when nothing has claimed the node's device number
 	 */
-	protected _device(path: string, inode: InodeLike = this.statSync(path)): (DeviceFile & { ops: FileOperations }) | undefined {
+	public _device(path: string, inode: InodeLike = this.statSync(path)): DeviceFileWithOps | undefined {
 		if (!isCharacterDevice(inode) && !isBlockDevice(inode)) return;
 
 		const devt = fromDev(inode.rdev);
@@ -167,6 +186,17 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 
 		if (!file.ops.read) throw withErrno('EINVAL');
 		file.ops.read(file, buffer, start, end);
+	}
+
+	/**
+	 * Read from a device node and say how much came back.
+	 *
+	 * This is the same call `readSync` makes; it exists because a terminal handing over one line is a
+	 * short read, and going through the VFS loses the count.
+	 */
+	public read_device(file: DeviceFileWithOps, buffer: Uint8Array, start: number, end: number): number {
+		if (!file.ops.read) throw withErrno('EINVAL');
+		return file.ops.read(file, buffer, start, end) ?? end - start;
 	}
 
 	public async read(path: string, buffer: Uint8Array, start: number, end: number): Promise<void> {

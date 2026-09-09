@@ -25,6 +25,7 @@
 	},
 	"files": [
 		"dist",
+		"uapi/dist",
 		"LICENSE.md",
 		"tsconfig.json"
 	],
@@ -33,7 +34,7 @@
 	},
 	"exports": {
 		".": "./dist/index.js",
-		"./*": "./dist/*"
+		"./*": "./dist/*.js"
 	},
 	"scripts": {
 		"format": "prettier --write .",

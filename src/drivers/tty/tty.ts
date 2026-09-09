@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import type { IoctlContext, IoctlOps } from '@zenfs/core/internal/ioctl.js';
+import type { IoctlContext, IoctlOps } from '@zenfs/core/internal/ioctl';
+import { iflags, lflags, oflags, tcflush } from '@zenfs/linux/uapi/abi';
 import { withErrno } from 'kerium';
+import { encodeUTF8 } from 'utilium';
 import { Device, type DevNode } from '../../device.js';
 import * as char_dev from '../../fs/char_dev.js';
 import { CharDevice } from '../../fs/char_dev.js';
 import type { DeviceFile, FileOperations } from '../../fs/devtmpfs.js';
+import { EPOLLIN, EPOLLOUT } from '../../fs/devtmpfs.js';
 import type { Module } from '../../module.js';
 import type { Process } from '../../process.js';
 import { Signal } from '../../signal.js';
+import { WaitQueue } from '../../wait.js';
 import { Class } from '../base/class.js';
 import { LineDiscipline } from './n_tty.js';
 import type { Termios } from './termios.js';
-import { default_termios, iflags, lflags, oflags, tcflush } from './termios.js';
-import { encodeUTF8 } from 'utilium';
+import { default_termios } from './termios.js';
 
 /** What a tty is driving, i.e. `enum tty_driver_type` */
 export type TTYDriverType = 'system' | 'console' | 'serial' | 'pty';
@@ -113,17 +116,19 @@ export class TTY {
 	}
 
 	/** Whatever is waiting for input to arrive, i.e. `tty->read_wait` */
-	protected readonly read_wait = new Set<() => void>();
+	public readonly read_wait = new WaitQueue();
+
+	/** Whether a read would come back with something, i.e. `input_available_p` */
+	public get readable(): boolean {
+		return !!this.available || this.ldisc.at_eof;
+	}
 
 	/**
 	 * Wait for input to arrive, i.e. `add_wait_queue(&tty->read_wait, ...)`.
-	 * There is nothing to block on here, so a waiter is called once there is something to read
-	 * and reads it then, the way a woken task would.
 	 * @returns a function that stops waiting, i.e. `remove_wait_queue`
 	 */
 	public wait_read(waiter: () => void): () => void {
-		this.read_wait.add(waiter);
-		return () => this.read_wait.delete(waiter);
+		return this.read_wait.wait_with(waiter);
 	}
 
 	/**
@@ -132,7 +137,7 @@ export class TTY {
 	 * The line discipline is what decides when that is, since only it knows whether a line is finished.
 	 */
 	public wake_read(): void {
-		for (const waiter of [...this.read_wait]) waiter();
+		this.read_wait.wake_up();
 	}
 
 	/**
@@ -345,6 +350,8 @@ export class TTYDriver {
 		release: file => this.tty_of(file).close(),
 		read: (file, buffer, start, end) => this.tty_of(file).ldisc.read(buffer.subarray(0, Math.max(end - start, 0))),
 		write: (file, buffer) => this.tty_of(file).write(buffer),
+		poll: file => (this.tty_of(file).readable ? EPOLLIN : 0) | EPOLLOUT,
+		poll_wait: file => this.tty_of(file).read_wait,
 		ioctl: {},
 	};
 

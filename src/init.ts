@@ -146,8 +146,19 @@ export function parse_cmdline(cmdline: string): void {
 	}
 }
 
-function code_of(e: unknown): string {
-	return (e as { code?: string })?.code ?? String(e);
+/**
+ * How a failure to start something is reported.
+ * An `errno` on its own says very little about which of a dozen steps went wrong, so whatever else the error carries comes with it.
+ */
+function code_of(e: unknown): string | undefined {
+	return (e as { code?: string })?.code;
+}
+
+function describe(e: unknown): string {
+	const { code, syscall, path, message } = (e ?? {}) as { code?: string; syscall?: string; path?: string; message?: string };
+	if (!code) return String(e);
+
+	return code + (syscall ? ` from ${syscall}` : '') + (path ? ` on ${path}` : '') + (message ? `: ${message}` : '');
 }
 
 function panic(message: string): never {
@@ -228,25 +239,25 @@ export async function init(options: InitOptions = {}): Promise<Process> {
 
 	const proc = new Process({ context: defaultContext, argv: initConfig.argv, env: { ...initConfig.env } });
 
-	function run_init_process(filename: string): void {
+	async function run_init_process(filename: string): Promise<void> {
 		info(`Run ${filename} as init process`);
-		execve(proc, filename, [filename, ...initConfig.argv.slice(1)], proc.env);
+		await execve(proc, filename, [filename, ...initConfig.argv.slice(1)], proc.env);
 	}
 
 	if (initConfig.init)
 		try {
-			run_init_process(initConfig.init);
+			await run_init_process(initConfig.init);
 			return proc;
 		} catch (e) {
-			panic(`Requested init ${initConfig.init} failed (${code_of(e)})`);
+			panic(`Requested init ${initConfig.init} failed (${describe(e)})`);
 		}
 
 	for (const filename of init_paths)
 		try {
-			run_init_process(filename);
+			await run_init_process(filename);
 			return proc;
 		} catch (e) {
-			if (code_of(e) != 'ENOENT') err(`Starting init: ${filename} exists but couldn't execute it (${code_of(e)})`);
+			if (code_of(e) != 'ENOENT') err(`Starting init: ${filename} exists but couldn't execute it (${describe(e)})`);
 		}
 
 	panic('No working init found. Pass one with `init=`.');

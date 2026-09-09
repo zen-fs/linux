@@ -8,6 +8,12 @@ export * from './power.js';
 export * from './process.js';
 export * from './resources.js';
 export * from './signal.js';
+export * from './thread.js';
+export * from './wait.js';
+
+export * from './syscall/table.js';
+import './syscall/fs.js';
+import './syscall/proc.js';
 
 export * from './drivers/base/base.js';
 export * from './drivers/base/bus.js';

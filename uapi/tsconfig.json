@@ -2,15 +2,16 @@
 	"compilerOptions": {
 		"module": "NodeNext",
 		"target": "ES2020",
-		"rootDir": "src",
-		"outDir": "dist",
-		"lib": ["ESNext", "ESNext.AsyncIterable"],
+		"rootDir": ".",
+		"outDir": "../dist/uapi",
+		"lib": ["ESNext", "ESNext.AsyncIterable", "WebWorker"],
+		"types": ["node"],
 		"strict": true,
 		"moduleResolution": "NodeNext",
 		"declaration": true,
+		"composite": true,
 		"verbatimModuleSyntax": true
 	},
-	"references": [{ "path": "./uapi" }],
-	"include": ["src/**/*"],
+	"include": ["**/*", "../src/_types.d.ts"],
 	"exclude": ["node_modules"]
 }

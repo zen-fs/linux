@@ -8,6 +8,8 @@ import { console_tty } from './drivers/tty/console.js';
 import type { TTY } from './drivers/tty/tty.js';
 import type { SignalHandler, SignalLike } from './signal.js';
 import { default_action, sig_kernel_only, Signal, signal_name, signal_of } from './signal.js';
+import type { Thread } from './thread.js';
+import { WaitQueue } from './wait.js';
 
 export interface ProcessInit {
 	argv?: string[];
@@ -40,6 +42,31 @@ const kIsProcessExit = Symbol('process.exit');
 export class Process {
 	/** The context this process runs in. Its id is the pid. */
 	public readonly context: FSContext;
+
+	/** What the process is running on, once it has been given a program */
+	public thread?: Thread;
+
+	/**
+	 * The signals userspace asked to handle itself, i.e. the ones with something other than `SIG_DFL`.
+	 * The kernel raises these on the thread instead of acting on them.
+	 */
+	public readonly caught = new Set<Signal>();
+
+	/**
+	 * Woken when a signal is raised on the process, so a syscall the kernel is still working on can
+	 * come back with `EINTR` instead of leaving the thread waiting on something nobody will finish.
+	 */
+	public readonly sigwait = new WaitQueue();
+
+	protected readonly _exited = Promise.withResolvers<number>();
+
+	/** Resolves with the exit code once the process has stopped */
+	public readonly exited: Promise<number> = this._exited.promise;
+
+	/** Whether the process has stopped but not yet been waited for */
+	public get zombie(): boolean {
+		return this.code !== undefined;
+	}
 
 	/** Whatever forked this process, or whatever adopted it once that exited. */
 	public parent?: Process;
@@ -140,6 +167,18 @@ export class Process {
 		else if (this.sigHandlers.get(sig)?.delete(handler) && !this.sigHandlers.get(sig)!.size) this.sigHandlers.delete(sig);
 	}
 
+	/** Tell the kernel userspace handles this signal itself, i.e. it is no longer `SIG_DFL` */
+	public catch_signal(signal: SignalLike): void {
+		const sig = signal_of(signal);
+		if (sig_kernel_only(sig)) throw withErrno('EINVAL', `${signal_name(sig)} cannot be caught or ignored`);
+		this.caught.add(sig);
+	}
+
+	/** Go back to the default action for a signal */
+	public uncatch_signal(signal: SignalLike): void {
+		this.caught.delete(signal_of(signal));
+	}
+
 	/** Send a signal to the process */
 	public kill(signal: SignalLike): boolean {
 		const sig = signal_of(signal);
@@ -151,6 +190,12 @@ export class Process {
 		if (handlers?.size) {
 			const name = signal_name(sig);
 			for (const handler of [...handlers]) handler(name, sig);
+			return true;
+		}
+
+		// Userspace asked for this one, so it goes to the thread and runs there
+		if (!sig_kernel_only(sig) && this.caught.has(sig) && this.thread) {
+			this.thread.raise(sig);
 			return true;
 		}
 
@@ -168,26 +213,34 @@ export class Process {
 			case 'term':
 			case 'core':
 				this.killed_by = sig;
-				this.code = 128 + sig;
-				if (current === this) throw Process.exit;
-				this.dispose();
+				this.exit(128 + sig);
 				return true;
 		}
 	}
 
-	/** Release everything the process was holding and drop it from the table */
-	public dispose(): void {
+	/**
+	 * Stop the process.
+	 *
+	 * What is left is a zombie: it keeps its pid and its exit code until its parent waits for it,
+	 * the way Linux keeps one around so a `wait` that comes late still has something to find.
+	 */
+	public exit(code: number = 0): void {
+		if (this.code !== undefined) return;
+		this.code = code;
+
+		this.thread?.kill();
+		this.thread = undefined;
+
 		const init = processes.get(1);
 
-		for (const child of this.children) {
-			if (!init || init === this) child.dispose();
+		for (const child of [...this.children]) {
+			if (!init || init === this) child.exit(child.code ?? 0);
 			else {
 				this.children.delete(child);
 				child.parent = init;
 				init.children.add(child);
 			}
 		}
-		this.children.clear();
 
 		for (const fd of [...this.context.descriptors.keys()]) {
 			try {
@@ -199,9 +252,49 @@ export class Process {
 
 		if (this.tty?.foreground === this) this.tty.foreground = this.parent;
 
+		this._exited.resolve(code);
+
+		// With no parent left to wait for it, there is nothing to keep the zombie around for
+		if (!this.parent) this.reap();
+	}
+
+	/** Drop what is left of a stopped process, i.e. what a `wait` does once it has the exit code */
+	public reap(): void {
+		if (this.code === undefined) throw withErrno('ECHILD', 'The process is still running');
+
 		this.parent?.children.delete(this);
+		this.parent = undefined;
 		processes.delete(this.pid);
 		if (this.context !== defaultContext) boundContexts.delete(this.pid);
+	}
+
+	/**
+	 * Wait for a child to stop and take its exit code.
+	 * @param pid which child, or -1 for whichever stops first
+	 * @throws ECHILD when there is no such child
+	 */
+	public async wait(pid: number = -1): Promise<number> {
+		if (pid >= 0) {
+			const child = processes.get(pid);
+			if (!child || child.parent !== this) throw withErrno('ECHILD');
+
+			const code = await child.exited;
+			child.reap();
+			return code;
+		}
+
+		if (!this.children.size) throw withErrno('ECHILD');
+
+		const child = await Promise.race([...this.children].map(async child => (await child.exited, child)));
+		const code = child.code!;
+		child.reap();
+		return code;
+	}
+
+	/** Stop the process and drop what is left of it, without anyone waiting for its exit code */
+	public dispose(): void {
+		this.exit(this.code ?? 0);
+		if (this.code !== undefined && processes.get(this.pid) === this) this.reap();
 	}
 
 	public [Symbol.dispose](): void {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { Signal } from '../../signal.js';
 import type { TTY } from './tty.js';
-import { cc, iflags, lflags, oflags } from './termios.js';
+import { cc, iflags, lflags, oflags } from '@zenfs/linux/uapi/abi';
 import { encodeUTF8 } from 'utilium';
 
 /** The characters that raise a signal and what each one raises, like the `__isig` switch */
