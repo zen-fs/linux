@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { Errno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
-import { Ioctl } from './abi.js';
+import { Ioctl, read_termios, TermiosAbi, Winsize } from './abi.js';
 import type { Syscalls } from './abi.js';
 import { returned, syscall_raw } from './base.js';
 import { environ, argv as get_argv, getpid } from './process.js';
@@ -243,12 +243,14 @@ export const wali = {
 	 * Everything else answers with the value itself.
 	 */
 	SYS_ioctl: (fd: number, request: Ioctl, ptr: number) => {
-		const value = syscall_raw('ioctl', fd, request, undefined);
+		const value = syscall_raw('ioctl', fd, request, ioctl_argument(request, ptr));
 		if (value < 0) return BigInt(value);
+
 		if (request == Ioctl.TCGETS || request == Ioctl.TIOCGWINSZ) {
 			give(ptr);
 			return 0n;
 		}
+
 		return BigInt(value);
 	},
 
@@ -480,6 +482,30 @@ function stat_at(name: 'stat' | 'lstat', path: string, ptr: number): bigint {
 function at(dirfd: number, path: number, call: () => bigint): bigint {
 	if (dirfd != AT_FDCWD && !getString(path).startsWith('/')) return -BigInt(Errno.ENOSYS);
 	return call();
+}
+
+/**
+ * What to hand the kernel for an `ioctl` that carries a structure in.
+ *
+ * The syscall takes a value rather than a pointer, so these are read out of linear memory here.
+ * Anything that only answers, or answers with a number, has nothing to pass along.
+ */
+function ioctl_argument(request: Ioctl, ptr: number): unknown {
+	if (!ptr) return undefined;
+	sync();
+
+	switch (request) {
+		case Ioctl.TCSETS:
+		case Ioctl.TCSETSW:
+		case Ioctl.TCSETSF:
+			return read_termios(new TermiosAbi(bytes.buffer, ptr));
+		case Ioctl.TIOCSWINSZ: {
+			const size = new Winsize(bytes.buffer, ptr);
+			return { rows: size.row, cols: size.col };
+		}
+		default:
+			return undefined;
+	}
 }
 
 /** The `struct iovec` array at a pointer. Its members are pointers, so it is 8 bytes, not 16. */

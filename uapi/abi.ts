@@ -217,6 +217,8 @@ export class UtsName extends struct('utsname', {
 export const enum Ioctl {
 	TCGETS = 0x5401,
 	TCSETS = 0x5402,
+	TCSETSW = 0x5403,
+	TCSETSF = 0x5404,
 	TIOCGWINSZ = 0x5413,
 	TIOCSWINSZ = 0x5414,
 	FIONREAD = 0x541b,

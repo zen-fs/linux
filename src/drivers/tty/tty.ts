@@ -269,6 +269,8 @@ export const tty_ioctls: Record<number, TTYIoctl> = {
 	[TtyIoctl.InputQueue]: ($, tty): number => tty.available,
 	[TtyIoctl.GetWinsize]: ($, tty): WinSize => tty.winsize,
 	[TtyIoctl.SetWinsize]: ($, tty, size: WinSize): void => {
+		if (typeof size?.rows != 'number' || typeof size.cols != 'number') throw withErrno('EINVAL');
+
 		const { rows, cols } = tty.winsize;
 		tty.winsize = size;
 		if (size.rows != rows || size.cols != cols) tty.signal(Signal.WINCH);
