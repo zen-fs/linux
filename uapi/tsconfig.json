@@ -12,6 +12,6 @@
 		"composite": true,
 		"verbatimModuleSyntax": true
 	},
-	"include": ["**/*", "../src/_types.d.ts"],
+	"include": ["**/*"],
 	"exclude": ["node_modules"]
 }

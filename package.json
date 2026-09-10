@@ -49,7 +49,6 @@
 		"eslint": "^10.1.0",
 		"globals": "^17.0.0",
 		"prettier": "^3.2.5",
-		"tsx": "^4.19.2",
 		"typedoc": "^0.28.18",
 		"typescript": "^6.0.0",
 		"typescript-eslint": "^8.58.0"
@@ -73,12 +72,5 @@
 		"tabWidth": 4,
 		"printWidth": 150,
 		"arrowParens": "avoid"
-	},
-	"allowScripts": {
-		"esbuild": true
-	},
-	"dependencies": {
-		"@endo/module-source": "^1.5.0",
-		"ses": "^2.3.0"
 	}
 }
