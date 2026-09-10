@@ -417,7 +417,7 @@ export interface Syscalls {
 	/** Tell the kernel whether this process handles a signal itself, i.e. `SIG_DFL` or not */
 	sigaction(signal: number, caught: boolean): number;
 	poll(fds: readonly { fd: number; events: number }[], timeout: number): number;
-
+	pipe(flags: number): number;
 	// The system
 	uname(): number;
 }

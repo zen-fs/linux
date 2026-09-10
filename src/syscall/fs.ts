@@ -21,6 +21,7 @@ import { processes } from '../process.js';
 import { wait_event, wait_event_any } from '../wait.js';
 import type { DeviceFileWithOps } from '../fs/devtmpfs.js';
 import { DevTmpFS, EPOLLIN, EPOLLOUT } from '../fs/devtmpfs.js';
+import { create_pipe, PipeFS } from '../fs/pipe.js';
 import { define_syscall, thread_of } from './table.js';
 
 /** Leave a `struct stat` in the region, which is where `stat` and friends put their answer */
@@ -56,10 +57,14 @@ define_syscall('open', (proc, path, flags, mode) => {
 
 define_syscall('close', (proc, fd) => fs.closeSync.call(proc.context, fd));
 
-/** The device a descriptor is on, when it is on one */
 function device_of(handle: Handle): DeviceFileWithOps | undefined {
 	const fs = handle.fs;
-	return fs instanceof DevTmpFS ? fs._device(handle.internalPath) : undefined;
+	return fs instanceof DevTmpFS || fs instanceof PipeFS ? fs._device(handle.internalPath) : undefined;
+}
+
+/** The file system a descriptor with its own operations is on, which knows how to run them */
+function ops_fs(handle: Handle): DevTmpFS | PipeFS {
+	return handle.fs as DevTmpFS | PipeFS;
 }
 
 /**
@@ -86,15 +91,24 @@ define_syscall('read', async (proc, fd, count, position) => {
 
 	// A terminal handing over one line is a short read, which only the device layer can report
 	const length = device
-		? (handle.fs as DevTmpFS).read_device(device, into, 0, into.byteLength)
+		? ops_fs(handle).read_device(device, into, 0, into.byteLength)
 		: handle.readSync(into, 0, into.byteLength, position < 0 ? undefined : position);
 
 	return thread_of(proc).filled(length);
 });
 
-define_syscall('write', (proc, fd, data, position) =>
-	fromFD(proc.context, fd).writeSync(data, 0, data.byteLength, position < 0 ? undefined : position)
-);
+define_syscall('write', async (proc, fd, data, position) => {
+	const handle = fromFD(proc.context, fd);
+	const device = device_of(handle);
+	const queue = device?.ops.poll_wait?.(device);
+
+	if (queue && !(poll(device) & EPOLLOUT)) {
+		if (handle.flag & O_NONBLOCK) throw withErrno('EAGAIN');
+		await wait_event(queue, () => !!(poll(device) & EPOLLOUT), proc);
+	}
+
+	return device ? ops_fs(handle).write_device(device, data, 0) : handle.writeSync(data, 0, data.byteLength, position < 0 ? undefined : position);
+});
 
 define_syscall('lseek', (proc, fd, offset, whence) => {
 	const handle = fromFD(proc.context, fd);
@@ -194,6 +208,18 @@ define_syscall('poll', async (proc, fds, timeout) => {
 	thread_of(proc).filled(revents.length * 2);
 
 	return revents.filter(Boolean).length;
+});
+
+define_syscall('pipe', (proc, flags) => {
+	const [read, write] = create_pipe(proc.context, flags);
+
+	const { region } = thread_of(proc);
+	const answer = new DataView(region.buffer, region.byteOffset);
+	answer.setInt32(0, read, true);
+	answer.setInt32(4, write, true);
+	thread_of(proc).filled(8);
+
+	return 0;
 });
 
 define_syscall('stat', (proc, path) => give_stat(proc, vfs.stat.call(proc.context, path, false)));

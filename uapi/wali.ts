@@ -254,6 +254,9 @@ export const wali = {
 		return BigInt(value);
 	},
 
+	SYS_pipe: (ptr: number) => pipe_fds(ptr, 0),
+	SYS_pipe2: (ptr: number, flags: number) => pipe_fds(ptr, flags),
+
 	SYS_poll: (ptr: number, nfds: number, timeout: number) => poll_fds(ptr, nfds, timeout),
 	SYS_ppoll: (ptr: number, nfds: number, ts: number) => poll_fds(ptr, nfds, duration(ts, 1e6)),
 	SYS_select: (nfds: number, r: number, w: number, e: number, tv: number) => select_fds(nfds, r, w, e, duration(tv, 1e3)),
@@ -526,6 +529,21 @@ function duration(ptr: number, per_ms: number): number {
 	if (!ptr) return -1;
 	sync();
 	return Number(view.getBigInt64(ptr, true)) * 1000 + Number(view.getBigInt64(ptr + 8, true)) / per_ms;
+}
+
+/** `pipe` fills in an `int[2]`, which the kernel leaves in the region as two `int32`s */
+function pipe_fds(ptr: number, flags: number): bigint {
+	const value = syscall_raw('pipe', flags);
+	if (value < 0) return BigInt(value);
+
+	const region = returned();
+	const answer = new DataView(region.buffer, region.byteOffset);
+
+	sync();
+	view.setInt32(ptr, answer.getInt32(0, true), true);
+	view.setInt32(ptr + 4, answer.getInt32(4, true), true);
+
+	return 0n;
 }
 
 /** `struct pollfd` is `{ int fd; short events; short revents; }`, so 8 bytes with the answer at 6 */

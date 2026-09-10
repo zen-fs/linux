@@ -36,7 +36,7 @@ export interface FileOperations {
 	open?: (file: DeviceFile) => void;
 	release?: (file: DeviceFile) => void;
 	read?: (file: DeviceFile, buffer: Uint8Array, start: number, end: number) => number | void;
-	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => void;
+	write?: (file: DeviceFile, buffer: Uint8Array, offset: number) => number | void;
 	sync?: (file: DeviceFile) => void;
 	/**
 	 * Which of {@link EPOLLIN} and {@link EPOLLOUT} the device is ready for right now, i.e. the mask
@@ -197,6 +197,12 @@ export class DevTmpFS extends StoreFS<InMemoryStore> {
 	public read_device(file: DeviceFileWithOps, buffer: Uint8Array, start: number, end: number): number {
 		if (!file.ops.read) throw withErrno('EINVAL');
 		return file.ops.read(file, buffer, start, end) ?? end - start;
+	}
+
+	/** The write half of {@link read_device}, for a device that can take less than it was offered */
+	public write_device(file: DeviceFileWithOps, buffer: Uint8Array, offset: number): number {
+		if (!file.ops.write) throw withErrno('EINVAL');
+		return file.ops.write(file, buffer, offset) ?? buffer.byteLength;
 	}
 
 	public async read(path: string, buffer: Uint8Array, start: number, end: number): Promise<void> {

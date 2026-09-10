@@ -18,6 +18,13 @@ export function close(fd: number): void {
 	syscall('close', fd);
 }
 
+export function pipe(flags: number = 0): [read: number, write: number] {
+	syscall('pipe', flags);
+	const region = returned();
+	const ends = new DataView(region.buffer, region.byteOffset);
+	return [ends.getInt32(0, true), ends.getInt32(4, true)];
+}
+
 /**
  * Read into a buffer. A buffer bigger than the return region comes back short, the way a read from a
  * pipe does, so callers loop.
