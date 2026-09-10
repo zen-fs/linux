@@ -228,15 +228,15 @@ export interface StatFsFields {
 }
 
 export function write_statfs(statfs: StatFs, from: StatFsFields): void {
-	statfs.type = BigInt(from.type);
-	statfs.bsize = BigInt(from.bsize);
-	statfs.blocks = BigInt(from.blocks);
-	statfs.bfree = BigInt(from.bfree);
-	statfs.bavail = BigInt(from.bavail);
-	statfs.files = BigInt(from.files);
-	statfs.ffree = BigInt(from.ffree);
-	statfs.frsize = BigInt(from.frsize);
-	statfs.namelen = BigInt(from.namelen);
+	statfs.type = BigInt(Math.round(from.type));
+	statfs.bsize = BigInt(Math.round(from.bsize));
+	statfs.blocks = BigInt(Math.round(from.blocks));
+	statfs.bfree = BigInt(Math.round(from.bfree));
+	statfs.bavail = BigInt(Math.round(from.bavail));
+	statfs.files = BigInt(Math.round(from.files));
+	statfs.ffree = BigInt(Math.round(from.ffree));
+	statfs.frsize = BigInt(Math.round(from.frsize));
+	statfs.namelen = BigInt(Math.round(from.namelen));
 }
 
 export function read_statfs(statfs: StatFs): StatFsFields {
