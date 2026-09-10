@@ -8,11 +8,12 @@
 import type { FSContext, InodeLike } from '@zenfs/core';
 import { fs } from '@zenfs/core';
 import { O_DIRECTORY, O_NONBLOCK } from '@zenfs/core/constants';
+import type { StatsFs } from '@zenfs/core/node/stats';
 import type { Handle } from '@zenfs/core/vfs/file';
 import { dupFD, fromFD, toFD } from '@zenfs/core/vfs/file';
 import { ioctlSync } from '@zenfs/core/vfs/ioctl';
 import * as vfs from '@zenfs/core/vfs/sync';
-import { Ioctl, Stat, TermiosAbi, Whence, Winsize, write_dirents, write_stat, write_termios } from '@zenfs/linux/uapi/abi';
+import { Ioctl, Stat, StatFs, TermiosAbi, Whence, Winsize, write_dirents, write_stat, write_statfs, write_termios } from '@zenfs/linux/uapi/abi';
 import type { Termios, WinSize } from '../drivers/tty/index.js';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
@@ -225,6 +226,22 @@ define_syscall('pipe', (proc, flags) => {
 define_syscall('stat', (proc, path) => give_stat(proc, vfs.stat.call(proc.context, path, false)));
 define_syscall('lstat', (proc, path) => give_stat(proc, vfs.stat.call(proc.context, path, true)));
 define_syscall('fstat', (proc, fd) => give_stat(proc, fromFD(proc.context, fd).inode));
+
+/** `NAME_MAX`. The VFS doesn't cap names, so this is what Linux uses rather than a real limit. */
+const nameMax = 255;
+
+function give_statfs(proc: Process, path: string): number {
+	const { type, bsize, blocks, bfree, bavail, files, ffree, frsize } = fs.statfsSync.call(proc.context, path) as StatsFs;
+
+	const { region } = thread_of(proc);
+	region.fill(0, 0, StatFs.size);
+	write_statfs(new StatFs(region.buffer, region.byteOffset), { type, bsize, blocks, bfree, bavail, files, ffree, frsize, namelen: nameMax });
+
+	return thread_of(proc).filled(StatFs.size);
+}
+
+define_syscall('statfs', (proc, path) => give_statfs(proc, path));
+define_syscall('fstatfs', (proc, fd) => give_statfs(proc, fromFD(proc.context, fd).path));
 
 define_syscall('getdents', (proc, fd) => {
 	const entries = vfs.readdir.call(proc.context, fromFD(proc.context, fd).path);

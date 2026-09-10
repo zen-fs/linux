@@ -6,8 +6,8 @@
  * turns these into `node:fs` lives above them.
  */
 import { decodeUTF8 } from 'utilium';
-import type { DirentFields, StatFields, TermiosFields, Whence } from './abi.js';
-import { Ioctl, read_dirents, read_stat, read_termios, Stat, TermiosAbi, Winsize } from './abi.js';
+import type { DirentFields, StatFields, StatFsFields, TermiosFields, Whence } from './abi.js';
+import { Ioctl, read_dirents, read_stat, read_statfs, read_termios, Stat, StatFs, TermiosAbi, Winsize } from './abi.js';
 import { returned, syscall, syscall_64 } from './base.js';
 
 export function open(path: string, flags: number, mode: number = 0o644): number {
@@ -111,6 +111,21 @@ export function lstat(path: string): StatFields {
 export function fstat(fd: number): StatFields {
 	syscall('fstat', fd);
 	return returned_stat();
+}
+
+function returned_statfs(): StatFsFields {
+	const region = returned();
+	return read_statfs(new StatFs(region.buffer, region.byteOffset));
+}
+
+export function statfs(path: string): StatFsFields {
+	syscall('statfs', path);
+	return returned_statfs();
+}
+
+export function fstatfs(fd: number): StatFsFields {
+	syscall('fstatfs', fd);
+	return returned_statfs();
 }
 
 /** Everything left in a directory, as `linux_dirent64` records the way `getdents64` gives them */

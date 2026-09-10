@@ -200,6 +200,59 @@ export function read_dirents(from: Uint8Array): DirentFields[] {
 	return entries;
 }
 
+export class StatFs extends struct('statfs', {
+	type: t.int64,
+	bsize: t.int64,
+	blocks: t.uint64,
+	bfree: t.uint64,
+	bavail: t.uint64,
+	files: t.uint64,
+	ffree: t.uint64,
+	fsid: t.int32(2),
+	namelen: t.int64,
+	frsize: t.int64,
+	flags: t.int64,
+	spare: t.int64(4),
+}) {}
+
+export interface StatFsFields {
+	type: number;
+	bsize: number;
+	blocks: number;
+	bfree: number;
+	bavail: number;
+	files: number;
+	ffree: number;
+	frsize: number;
+	namelen: number;
+}
+
+export function write_statfs(statfs: StatFs, from: StatFsFields): void {
+	statfs.type = BigInt(from.type);
+	statfs.bsize = BigInt(from.bsize);
+	statfs.blocks = BigInt(from.blocks);
+	statfs.bfree = BigInt(from.bfree);
+	statfs.bavail = BigInt(from.bavail);
+	statfs.files = BigInt(from.files);
+	statfs.ffree = BigInt(from.ffree);
+	statfs.frsize = BigInt(from.frsize);
+	statfs.namelen = BigInt(from.namelen);
+}
+
+export function read_statfs(statfs: StatFs): StatFsFields {
+	return {
+		type: Number(statfs.type),
+		bsize: Number(statfs.bsize),
+		blocks: Number(statfs.blocks),
+		bfree: Number(statfs.bfree),
+		bavail: Number(statfs.bavail),
+		files: Number(statfs.files),
+		ffree: Number(statfs.ffree),
+		frsize: Number(statfs.frsize),
+		namelen: Number(statfs.namelen),
+	};
+}
+
 /** `struct utsname`, with the same field size Linux uses */
 export class UtsName extends struct('utsname', {
 	sysname: t.char(65),
@@ -386,6 +439,9 @@ export interface Syscalls {
 	stat(path: string): number;
 	lstat(path: string): number;
 	fstat(fd: number): number;
+	/** Leaves a `struct statfs` in the region, describing whichever mount holds the path */
+	statfs(path: string): number;
+	fstatfs(fd: number): number;
 
 	// Directories
 	/** @returns the number of bytes of `linux_dirent64` records left in the region */

@@ -269,16 +269,14 @@ export const wali = {
 	SYS_pselect6: (nfds: number, r: number, w: number, e: number, ts: number) => select_fds(nfds, r, w, e, duration(ts, 1e6)),
 
 	// Metadata. The kernel writes a `struct stat` that is already the layout musl expects.
-	SYS_stat: (path: number, ptr: number) => stat_at('stat', getString(path), ptr),
-	SYS_lstat: (path: number, ptr: number) => stat_at('lstat', getString(path), ptr),
-	SYS_fstat: (fd: number, ptr: number) => {
-		const value = syscall_raw('fstat', fd);
-		if (value < 0) return BigInt(value);
-		give(ptr);
-		return 0n;
-	},
+	SYS_stat: (path: number, ptr: number) => filled_at('stat', ptr, getString(path)),
+	SYS_lstat: (path: number, ptr: number) => filled_at('lstat', ptr, getString(path)),
+	SYS_fstat: (fd: number, ptr: number) => filled_at('fstat', ptr, fd),
 	SYS_fstatat: (dirfd: number, path: number, ptr: number, flags: number) =>
-		at(dirfd, path, () => stat_at(flags & 0x100 ? 'lstat' : 'stat', getString(path), ptr)),
+		at(dirfd, path, () => filled_at(flags & 0x100 ? 'lstat' : 'stat', ptr, getString(path))),
+
+	SYS_statfs: (path: number, ptr: number) => filled_at('statfs', ptr, getString(path)),
+	SYS_fstatfs: (fd: number, ptr: number) => filled_at('fstatfs', ptr, fd),
 
 	SYS_access: (path: number, mode: number) => sys('access', getString(path), mode),
 	SYS_faccessat: (dirfd: number, path: number, mode: number) => at(dirfd, path, () => sys('access', getString(path), mode)),
@@ -526,9 +524,9 @@ function timespec(ptr: number, ms: number): bigint {
 	return 0n;
 }
 
-/** `stat` and `lstat` both leave the structure in the region, so both come back the same way */
-function stat_at(name: 'stat' | 'lstat', path: string, ptr: number): bigint {
-	const value = syscall_raw(name, path);
+/** A syscall whose answer is a structure left in the region, which is copied to a pointer as it is */
+function filled_at<K extends keyof Syscalls>(name: K, ptr: number, ...args: Parameters<Syscalls[K]>): bigint {
+	const value = syscall_raw(name, ...args);
 	if (value < 0) return BigInt(value);
 	give(ptr);
 	return 0n;
