@@ -133,12 +133,10 @@ function trace(name: string, args: unknown[], value: number): void {
 }
 
 export const wali = {
-	/*
-	 * Startup. The interpreter has already done everything a WALI host would do before
-	 * `_start`, so the constructor hooks have nothing left to do.
-	 */
 	__call_ctors: () => {},
 	__call_dtors: () => {},
+	__init: () => 0,
+	__deinit: () => 0,
 	__proc_exit: (code: number) => void syscall_raw('exit', code),
 
 	__cl_get_argc: () => get_argv().length,
