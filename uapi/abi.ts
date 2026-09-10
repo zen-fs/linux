@@ -219,6 +219,10 @@ export const enum Ioctl {
 	TCSETS = 0x5402,
 	TCSETSW = 0x5403,
 	TCSETSF = 0x5404,
+	TCFLSH = 0x540b,
+	TIOCGPGRP = 0x540f,
+	TIOCSPGRP = 0x5410,
+	TIOCOUTQ = 0x5411,
 	TIOCGWINSZ = 0x5413,
 	TIOCSWINSZ = 0x5414,
 	FIONREAD = 0x541b,
@@ -412,6 +416,7 @@ export interface Syscalls {
 	kill(pid: number, signal: number): number;
 	/** Tell the kernel whether this process handles a signal itself, i.e. `SIG_DFL` or not */
 	sigaction(signal: number, caught: boolean): number;
+	poll(fds: readonly { fd: number; events: number }[], timeout: number): number;
 
 	// The system
 	uname(): number;

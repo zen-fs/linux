@@ -63,6 +63,11 @@ function read_at(ptr: number, length: number): Uint8Array {
 	return bytes.slice(ptr, ptr + length);
 }
 
+function struct_at<T>(Type: { new (buffer: ArrayBufferLike, offset: number): T; size: number }, ptr: number): T {
+	const copy = read_at(ptr, Type.size);
+	return new Type(copy.buffer, copy.byteOffset);
+}
+
 /** Put whatever the last syscall left in the region at a pointer, up to `limit` bytes */
 function give(ptr: number, limit: number = Infinity): number {
 	const region = returned();
@@ -210,7 +215,6 @@ export const wali = {
 		}
 		return BigInt(total);
 	},
-	/** Gathered into one write, since the kernel has no `writev` and a tty must not interleave */
 	SYS_writev: (fd: number, iov: number, count: number) => {
 		const parts = iovecs(iov, count);
 		const total = parts.reduce((sum, { length }) => sum + length, 0);
@@ -231,17 +235,7 @@ export const wali = {
 	SYS_fdatasync: (fd: number) => sys('fdatasync', fd),
 	SYS_dup: (fd: number) => sys('dup', fd),
 	SYS_dup2: (from: number, to: number) => sys('dup2', from, to),
-
-	/**
-	 * Only the descriptor flags, which have no meaning here, and `F_DUPFD`. musl asks for these
-	 * on its way through stdio and is content with a success.
-	 */
 	SYS_fcntl: (fd: number, cmd: number) => (cmd == 0 ? sys('dup', fd) : 0n),
-
-	/**
-	 * The answers that are structures are in the region, since the syscall return is one `i64`.
-	 * Everything else answers with the value itself.
-	 */
 	SYS_ioctl: (fd: number, request: Ioctl, ptr: number) => {
 		const value = syscall_raw('ioctl', fd, request, ioctl_argument(request, ptr));
 		if (value < 0) return BigInt(value);
@@ -251,8 +245,19 @@ export const wali = {
 			return 0n;
 		}
 
+		if (ptr && (request == Ioctl.TIOCGPGRP || request == Ioctl.FIONREAD || request == Ioctl.TIOCOUTQ)) {
+			sync();
+			view.setInt32(ptr, value, true);
+			return 0n;
+		}
+
 		return BigInt(value);
 	},
+
+	SYS_poll: (ptr: number, nfds: number, timeout: number) => poll_fds(ptr, nfds, timeout),
+	SYS_ppoll: (ptr: number, nfds: number, ts: number) => poll_fds(ptr, nfds, duration(ts, 1e6)),
+	SYS_select: (nfds: number, r: number, w: number, e: number, tv: number) => select_fds(nfds, r, w, e, duration(tv, 1e3)),
+	SYS_pselect6: (nfds: number, r: number, w: number, e: number, ts: number) => select_fds(nfds, r, w, e, duration(ts, 1e6)),
 
 	// Metadata. The kernel writes a `struct stat` that is already the layout musl expects.
 	SYS_stat: (path: number, ptr: number) => stat_at('stat', getString(path), ptr),
@@ -452,6 +457,7 @@ function link(module: WebAssembly.Module): WebAssembly.ModuleImports {
 /** Every WALI syscall answers with an `i64`, so one that is not here can say so in the same shape */
 function not_implemented(name: string): () => bigint {
 	return () => {
+		if (!missing.has(name) && tracing) syscall_raw('write', 2, encodeUTF8(`wali: ${name}: not implemented\n`), -1);
 		missing.add(name);
 		return -BigInt(Errno.ENOSYS);
 	};
@@ -491,6 +497,8 @@ function at(dirfd: number, path: number, call: () => bigint): bigint {
  * Anything that only answers, or answers with a number, has nothing to pass along.
  */
 function ioctl_argument(request: Ioctl, ptr: number): unknown {
+	if (request == Ioctl.TCFLSH) return ptr;
+
 	if (!ptr) return undefined;
 	sync();
 
@@ -498,14 +506,86 @@ function ioctl_argument(request: Ioctl, ptr: number): unknown {
 		case Ioctl.TCSETS:
 		case Ioctl.TCSETSW:
 		case Ioctl.TCSETSF:
-			return read_termios(new TermiosAbi(bytes.buffer, ptr));
+			return read_termios(struct_at(TermiosAbi, ptr));
 		case Ioctl.TIOCSWINSZ: {
-			const size = new Winsize(bytes.buffer, ptr);
+			const size = struct_at(Winsize, ptr);
 			return { rows: size.row, cols: size.col };
 		}
+		case Ioctl.TIOCSPGRP:
+			return view.getInt32(ptr, true);
 		default:
 			return undefined;
 	}
+}
+
+const POLLIN = 1,
+	POLLPRI = 2,
+	POLLOUT = 4;
+
+function duration(ptr: number, per_ms: number): number {
+	if (!ptr) return -1;
+	sync();
+	return Number(view.getBigInt64(ptr, true)) * 1000 + Number(view.getBigInt64(ptr + 8, true)) / per_ms;
+}
+
+/** `struct pollfd` is `{ int fd; short events; short revents; }`, so 8 bytes with the answer at 6 */
+function poll_fds(ptr: number, nfds: number, timeout: number): bigint {
+	sync();
+
+	const fds = [];
+	for (let i = 0; i < nfds; i++) fds.push({ fd: view.getInt32(ptr + i * 8, true), events: view.getUint16(ptr + i * 8 + 4, true) });
+
+	const value = syscall_raw('poll', fds, timeout);
+	if (value < 0) return BigInt(value);
+
+	const region = returned();
+	const answer = new DataView(region.buffer, region.byteOffset);
+
+	sync();
+	for (let i = 0; i < nfds; i++) view.setUint16(ptr + i * 8 + 6, answer.getUint16(i * 2, true), true);
+
+	return BigInt(value);
+}
+
+/**
+ * `select`, which is `poll` with the descriptors in bitmaps rather than a list.
+ * The sets are both the question and the answer, which is why it is said to destroy its arguments.
+ */
+function select_fds(nfds: number, readfds: number, writefds: number, exceptfds: number, timeout: number): bigint {
+	sync();
+
+	const sets = [readfds, writefds, exceptfds];
+	const wants = [POLLIN, POLLOUT, POLLPRI];
+
+	const events = new Map<number, number>();
+	for (const [i, set] of sets.entries()) {
+		if (!set) continue;
+		for (let fd = 0; fd < nfds; fd++) {
+			if (bytes[set + (fd >> 3)] & (1 << (fd & 7))) events.set(fd, (events.get(fd) ?? 0) | wants[i]);
+		}
+	}
+
+	const fds = [...events].map(([fd, events]) => ({ fd, events }));
+	const value = syscall_raw('poll', fds, timeout);
+	if (value < 0) return BigInt(value);
+
+	const region = returned();
+	const answer = new DataView(region.buffer, region.byteOffset);
+
+	sync();
+	for (const set of sets) if (set) bytes.fill(0, set, set + Math.ceil(nfds / 8));
+
+	let ready = 0;
+	fds.forEach(({ fd }, i) => {
+		const mask = answer.getUint16(i * 2, true);
+		for (const [s, set] of sets.entries()) {
+			if (!set || !(mask & wants[s])) continue;
+			bytes[set + (fd >> 3)] |= 1 << (fd & 7);
+			ready++;
+		}
+	});
+
+	return BigInt(ready);
 }
 
 /** The `struct iovec` array at a pointer. Its members are pointers, so it is 8 bytes, not 16. */

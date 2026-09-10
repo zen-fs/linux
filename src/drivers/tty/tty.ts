@@ -222,6 +222,8 @@ export enum TtyIoctl {
 	SetTermiosDrain = 0x5403,
 	SetTermiosFlush = 0x5404,
 	Flush = 0x540b,
+	GetPgrp = 0x540f,
+	SetPgrp = 0x5410,
 	OutputQueue = 0x5411,
 	SendInput = 0x5412,
 	GetWinsize = 0x5413,
@@ -239,6 +241,8 @@ export interface TTYIoctlOps extends IoctlOps {
 	[TtyIoctl.SetTermiosDrain]($: IoctlContext, termios: Partial<Termios>): void;
 	[TtyIoctl.SetTermiosFlush]($: IoctlContext, termios: Partial<Termios>): void;
 	[TtyIoctl.Flush]($: IoctlContext, queue?: number): void;
+	[TtyIoctl.GetPgrp](): number;
+	[TtyIoctl.SetPgrp]($: IoctlContext, proc: Process): void;
 	[TtyIoctl.OutputQueue](): number;
 	[TtyIoctl.SendInput]($: IoctlContext, text: string): void;
 	[TtyIoctl.GetWinsize](): WinSize;
@@ -263,6 +267,13 @@ export const tty_ioctls: Record<number, TTYIoctl> = {
 	[TtyIoctl.Flush]: ($, tty, queue: number = tcflush.TCIFLUSH): void => {
 		// There is no output queue, so `TCOFLUSH` has nothing to throw away
 		if (queue == tcflush.TCIFLUSH || queue == tcflush.TCIOFLUSH) tty.ldisc.flush();
+	},
+	[TtyIoctl.GetPgrp]: ($, tty): number => {
+		if (!tty.foreground) throw withErrno('ENOTTY');
+		return tty.foreground.pid;
+	},
+	[TtyIoctl.SetPgrp]: ($, tty, proc: Process): void => {
+		tty.foreground = proc;
 	},
 	[TtyIoctl.OutputQueue]: (): number => 0,
 	[TtyIoctl.SendInput]: ($, tty, text: string): void => tty.ldisc.push(text),

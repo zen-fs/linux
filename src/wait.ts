@@ -45,27 +45,40 @@ export class WaitQueue {
 
 /**
  * Sleep until `condition` holds, i.e. `wait_event_interruptible`.
- *
- * A signal ends the wait with `EINTR`. Linux would return `-ERESTARTSYS` and restart the call once
- * the handler is done; here the handler runs in userspace when the syscall comes back, so what it
- * sees is the `EINTR` a syscall with `SA_RESTART` off would give.
- *
  * @throws EINTR when a signal arrives first
  */
 export async function wait_event(queue: WaitQueue, condition: () => boolean, proc?: Process): Promise<void> {
+	await wait_event_any([queue], condition, proc);
+}
+
+/**
+ * Sleep until `condition` holds on any of several queues, i.e. what `do_poll` does.
+ * @param timeout how long to wait in milliseconds, 0 to only look, or a negative number to wait forever
+ * @returns whether the condition holds, i.e. false if the time ran out first
+ * @throws EINTR when a signal arrives first
+ */
+export async function wait_event_any(queues: readonly WaitQueue[], condition: () => boolean, proc?: Process, timeout: number = -1): Promise<boolean> {
+	const deadline = timeout < 0 ? Infinity : Date.now() + timeout;
+
 	while (!condition()) {
+		if (Date.now() >= deadline) return false;
+
 		const interrupts = proc?.thread?.interrupts;
 		const { promise, resolve } = Promise.withResolvers<void>();
 
-		// `add_wait_queue` and `remove_wait_queue` around one sleep, so nothing is left on a queue
-		const remove = [queue.wait_with(resolve), proc?.sigwait.wait_with(resolve)];
+		const remove = [...queues.map(queue => queue.wait_with(resolve)), proc?.sigwait.wait_with(resolve)];
+
+		const timer = deadline == Infinity ? undefined : setTimeout(resolve, Math.max(0, deadline - Date.now()));
 
 		try {
 			await promise;
 		} finally {
 			for (const stop of remove) stop?.();
+			clearTimeout(timer);
 		}
 
 		if (proc?.thread && proc.thread.interrupts !== interrupts) throw withErrno('EINTR');
 	}
+
+	return true;
 }

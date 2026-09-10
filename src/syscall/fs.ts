@@ -17,7 +17,8 @@ import type { Termios, WinSize } from '../drivers/tty/index.js';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
 import type { Process } from '../process.js';
-import { wait_event } from '../wait.js';
+import { processes } from '../process.js';
+import { wait_event, wait_event_any } from '../wait.js';
 import type { DeviceFileWithOps } from '../fs/devtmpfs.js';
 import { DevTmpFS, EPOLLIN, EPOLLOUT } from '../fs/devtmpfs.js';
 import { define_syscall, thread_of } from './table.js';
@@ -149,14 +150,50 @@ const ioctl_answers: Record<number, (into: Uint8Array, value: never) => number> 
 	},
 };
 
+function ioctl_argument(request: Ioctl, arg: unknown): unknown {
+	if (request != Ioctl.TIOCSPGRP) return arg;
+
+	const target = processes.get(arg as number);
+	if (!target) throw withErrno('ESRCH');
+	return target;
+}
+
 define_syscall('ioctl', (proc, fd, request, arg) => {
 	const ioctl = ioctlSync as unknown as (this: FSContext, fd: number, command: number, ...args: unknown[]) => unknown;
-	const value = ioctl.call(proc.context, fd, request, arg);
+	const value = ioctl.call(proc.context, fd, request, ioctl_argument(request, arg));
 
 	const answer = ioctl_answers[request];
 	if (answer) return thread_of(proc).filled(answer(thread_of(proc).region, value as never));
 
 	return typeof value == 'number' ? value : 0;
+});
+
+const POLLNVAL = 0x20;
+
+define_syscall('poll', async (proc, fds, timeout) => {
+	const entries = fds.map(({ fd, events }) => {
+		try {
+			const device = device_of(fromFD(proc.context, fd));
+			return { events, device, queue: device?.ops.poll_wait?.(device) };
+		} catch {
+			return { events, invalid: true };
+		}
+	});
+
+	const masks = (): number[] => entries.map(e => ('invalid' in e ? POLLNVAL : poll(e.device) & e.events));
+
+	const ready = (): number => masks().filter(Boolean).length;
+
+	const queues = entries.flatMap(e => ('queue' in e && e.queue ? [e.queue] : []));
+	await wait_event_any(queues, () => ready() > 0, proc, timeout);
+
+	const { region } = thread_of(proc);
+	const answer = new DataView(region.buffer, region.byteOffset);
+	const revents = masks();
+	revents.forEach((mask, i) => answer.setUint16(i * 2, mask, true));
+	thread_of(proc).filled(revents.length * 2);
+
+	return revents.filter(Boolean).length;
 });
 
 define_syscall('stat', (proc, path) => give_stat(proc, vfs.stat.call(proc.context, path, false)));
