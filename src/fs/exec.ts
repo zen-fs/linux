@@ -41,8 +41,16 @@ const binfmt_js = {
 	},
 } satisfies BinFmt;
 
+const binfmt_wasm = {
+	name: 'wasm',
+	interpreter: '/bin/wali',
+	matches({ buf }: BinPrm): boolean {
+		return decodeASCII(buf.subarray(0, 4)) === '\0asm';
+	},
+} satisfies BinFmt;
+
 /** The registered formats, in the order they are tried */
-export const binfmts = new Set<BinFmt>([binfmt_js]);
+export const binfmts = new Set<BinFmt>([binfmt_wasm, binfmt_js]);
 
 /** Hand the program to the first format that recognizes it */
 export function search_binary_handler(prm: BinPrm): BinFmt {

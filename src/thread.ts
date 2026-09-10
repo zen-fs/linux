@@ -153,8 +153,8 @@ export class Thread {
 		public readonly proc: Process,
 		regionSize: number = defaultRegionSize
 	) {
-		// Serve it with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.'
-		if (!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated) throw withErrno('ENOSYS', 'Missing SharedArrayBuffer!');
+		if (typeof SharedArrayBuffer == 'undefined')
+			throw withErrno('ENOSYS', 'Missing SharedArrayBuffer! If this is a web environment the page must be cross-origin isolated.');
 
 		this.page = new SharedArrayBuffer(regionOffset + regionSize);
 		this.control = new SyscallData(this.page);

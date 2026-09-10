@@ -1,0 +1,518 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+import { Errno } from 'kerium';
+import { encodeUTF8 } from 'utilium';
+import { Ioctl } from './abi.js';
+import type { Syscalls } from './abi.js';
+import { returned, syscall_raw } from './base.js';
+import { environ, argv as get_argv, getpid } from './process.js';
+
+/** The flags `__get_init_envfile` needs to leave the environment somewhere musl can read it */
+const O_WRONLY = 1,
+	O_CREAT = 0o100,
+	O_TRUNC = 0o1000;
+
+const AT_FDCWD = -100;
+
+/** A wasm page. Linear memory only ever grows by these. */
+const wasmPageSize = 65536;
+
+/** What musl thinks a page is, which is what its `mmap` lengths are rounded to */
+const pageSize = 4096;
+
+let memory: WebAssembly.Memory | undefined;
+
+let buffer: ArrayBufferLike | undefined,
+	bytes = new Uint8Array(),
+	words = new Int32Array(),
+	view = new DataView(new ArrayBuffer(0));
+
+/**
+ * The views onto linear memory, remade when it has grown.
+ */
+function sync(): void {
+	const current = memory!.buffer;
+	if (current === buffer && bytes.byteLength === current.byteLength) return;
+
+	buffer = current;
+	bytes = new Uint8Array(current);
+	words = new Int32Array(current);
+	view = new DataView(current);
+}
+
+/** Read a NUL-terminated string, the way a syscall taking a `const char *` does */
+function getString(ptr: number): string {
+	sync();
+	if (!ptr) return '';
+	const end = bytes.indexOf(0, ptr);
+	// Copied out because linear memory is shared, and a decoder is not required to take that
+	return new TextDecoder().decode(bytes.slice(ptr, end < 0 ? undefined : end));
+}
+
+/** Write a string and its NUL, the way `strcpy` does. @returns how many bytes that took */
+function putString(ptr: number, text: string): number {
+	sync();
+	const encoded = encodeUTF8(text);
+	bytes.set(encoded, ptr);
+	bytes[ptr + encoded.byteLength] = 0;
+	return encoded.byteLength + 1;
+}
+
+/** A copy of a range of linear memory, so what goes to the kernel is not shared out from under it */
+function read_at(ptr: number, length: number): Uint8Array {
+	sync();
+	return bytes.slice(ptr, ptr + length);
+}
+
+/** Put whatever the last syscall left in the region at a pointer, up to `limit` bytes */
+function give(ptr: number, limit: number = Infinity): number {
+	const region = returned();
+	const length = Math.min(region.byteLength, limit);
+	sync();
+	bytes.set(region.subarray(0, length), ptr);
+	return length;
+}
+
+/*
+ * mmap.
+ *
+ * Anonymous mappings are all musl's allocator asks for, and linear memory can only grow at the end,
+ * so this hands out the space after the module's own data and grows to cover it. WALI's host does
+ * exactly this, which is why `munmap` can only ever give back the most recent mapping.
+ */
+
+/** Where mappings start: the end of the memory the module was instantiated with */
+let mmapBase = 0;
+
+/** How far past {@link mmapBase} has been handed out */
+let mmapLength = 0;
+
+function mmap(length: number): number {
+	if (length <= 0) return -Errno.EINVAL;
+
+	const size = Math.ceil(length / pageSize) * pageSize;
+	const address = mmapBase + mmapLength;
+
+	sync();
+	const needed = address + size - bytes.byteLength;
+	if (needed > 0) {
+		try {
+			memory!.grow(Math.ceil(needed / wasmPageSize));
+		} catch {
+			// `MAP_FAILED`, which is what musl checks for
+			return -1;
+		}
+		sync();
+	}
+
+	mmapLength += size;
+	return address;
+}
+
+/** The i32 at a wasm address, for the futex calls */
+function word(ptr: number): number {
+	sync();
+	return ptr >> 2;
+}
+
+function sys<K extends keyof Syscalls>(name: K, ...args: Parameters<Syscalls[K]>): bigint {
+	const value = syscall_raw(name, ...args);
+	if (tracing) trace(name, args, value);
+	return BigInt(value);
+}
+
+/** Set from `WALI_TRACE` in the environment, the way `strace` is turned on from outside */
+let tracing = false;
+
+/** The last few calls, so a program that traps can say what it was doing */
+export const recent: string[] = [];
+
+function trace(name: string, args: unknown[], value: number): void {
+	const shown = args.map(arg => (arg instanceof Uint8Array ? `<${arg.byteLength} bytes>` : JSON.stringify(arg))).join(', ');
+	recent.push(`${name}(${shown}) = ${value}`);
+	if (recent.length > 32) recent.shift();
+}
+
+export const wali = {
+	/*
+	 * Startup. The interpreter has already done everything a WALI host would do before
+	 * `_start`, so the constructor hooks have nothing left to do.
+	 */
+	__call_ctors: () => {},
+	__call_dtors: () => {},
+	__proc_exit: (code: number) => void syscall_raw('exit', code),
+
+	__cl_get_argc: () => get_argv().length,
+	__cl_get_argv_len: (index: number) => encodeUTF8(get_argv()[index] ?? '').byteLength,
+	__cl_copy_argv: (ptr: number, index: number) => {
+		putString(ptr, get_argv()[index] ?? '');
+		return 0;
+	},
+
+	/**
+	 * musl reads the environment out of a file rather than off the stack, since a wasm module
+	 * has no stack to put it on. So this writes one and says where it is.
+	 */
+	__get_init_envfile: (ptr: number, size: number) => {
+		const path = `/tmp/wali_env.${getpid()}`;
+		const lines = Object.entries(environ())
+			.map(([key, value]) => `${key}=${value}\n`)
+			.join('');
+
+		const fd = syscall_raw('open', path, O_WRONLY | O_CREAT | O_TRUNC, 0o600);
+		if (fd < 0) return 0;
+		syscall_raw('write', fd, encodeUTF8(lines), -1);
+		syscall_raw('close', fd);
+
+		if (path.length + 1 > size) return 0;
+		putString(ptr, path);
+		return 1;
+	},
+
+	// Memory. None of these reach the kernel: linear memory is the address space.
+	SYS_mmap: (_addr: number, length: number) => BigInt(mmap(length)),
+	SYS_munmap: (addr: number, length: number) => {
+		// Only a mapping at the very end can be given back, the same as under WALI's host
+		const size = Math.ceil(length / pageSize) * pageSize;
+		if (addr + size === mmapBase + mmapLength) mmapLength -= size;
+		return 0n;
+	},
+	SYS_mremap: (addr: number, old: number, length: number) => {
+		const moved = mmap(length);
+		if (moved < 0) return BigInt(moved);
+		sync();
+		bytes.copyWithin(moved, addr, addr + Math.min(old, length));
+		return BigInt(moved);
+	},
+	SYS_mprotect: () => 0n,
+	SYS_madvise: () => 0n,
+	/** `brk` is a no-op under WALI: there is no break to move. */
+	SYS_brk: () => 0n,
+
+	// Files
+	SYS_open: (path: number, flags: number, mode: number) => sys('open', getString(path), flags, mode),
+	SYS_openat: (dirfd: number, path: number, flags: number, mode: number) => at(dirfd, path, () => sys('open', getString(path), flags, mode)),
+	SYS_close: (fd: number) => sys('close', fd),
+
+	SYS_read: (fd: number, ptr: number, count: number) => {
+		const length = syscall_raw('read', fd, count, -1);
+		if (length < 0) return BigInt(length);
+		return BigInt(give(ptr, count));
+	},
+	SYS_write: (fd: number, ptr: number, count: number) => sys('write', fd, read_at(ptr, count), -1),
+
+	SYS_readv: (fd: number, iov: number, count: number) => {
+		let total = 0;
+		for (const { base, length } of iovecs(iov, count)) {
+			if (!length) continue;
+			const got = syscall_raw('read', fd, length, -1);
+			if (got < 0) return total ? BigInt(total) : BigInt(got);
+			total += give(base, length);
+			// A short read means there is nothing more to be had right now
+			if (got < length) break;
+		}
+		return BigInt(total);
+	},
+	/** Gathered into one write, since the kernel has no `writev` and a tty must not interleave */
+	SYS_writev: (fd: number, iov: number, count: number) => {
+		const parts = iovecs(iov, count);
+		const total = parts.reduce((sum, { length }) => sum + length, 0);
+
+		const data = new Uint8Array(total);
+		let offset = 0;
+		for (const { base, length } of parts) {
+			data.set(read_at(base, length), offset);
+			offset += length;
+		}
+
+		return sys('write', fd, data, -1);
+	},
+
+	SYS_lseek: (fd: number, offset: bigint, whence: number) => sys('lseek', fd, Number(offset), whence),
+	SYS_ftruncate: (fd: number, length: number) => sys('ftruncate', fd, length),
+	SYS_fsync: (fd: number) => sys('fsync', fd),
+	SYS_fdatasync: (fd: number) => sys('fdatasync', fd),
+	SYS_dup: (fd: number) => sys('dup', fd),
+	SYS_dup2: (from: number, to: number) => sys('dup2', from, to),
+
+	/**
+	 * Only the descriptor flags, which have no meaning here, and `F_DUPFD`. musl asks for these
+	 * on its way through stdio and is content with a success.
+	 */
+	SYS_fcntl: (fd: number, cmd: number) => (cmd == 0 ? sys('dup', fd) : 0n),
+
+	/**
+	 * The answers that are structures are in the region, since the syscall return is one `i64`.
+	 * Everything else answers with the value itself.
+	 */
+	SYS_ioctl: (fd: number, request: Ioctl, ptr: number) => {
+		const value = syscall_raw('ioctl', fd, request, undefined);
+		if (value < 0) return BigInt(value);
+		if (request == Ioctl.TCGETS || request == Ioctl.TIOCGWINSZ) {
+			give(ptr);
+			return 0n;
+		}
+		return BigInt(value);
+	},
+
+	// Metadata. The kernel writes a `struct stat` that is already the layout musl expects.
+	SYS_stat: (path: number, ptr: number) => stat_at('stat', getString(path), ptr),
+	SYS_lstat: (path: number, ptr: number) => stat_at('lstat', getString(path), ptr),
+	SYS_fstat: (fd: number, ptr: number) => {
+		const value = syscall_raw('fstat', fd);
+		if (value < 0) return BigInt(value);
+		give(ptr);
+		return 0n;
+	},
+	SYS_fstatat: (dirfd: number, path: number, ptr: number, flags: number) =>
+		at(dirfd, path, () => stat_at(flags & 0x100 ? 'lstat' : 'stat', getString(path), ptr)),
+
+	SYS_access: (path: number, mode: number) => sys('access', getString(path), mode),
+	SYS_faccessat: (dirfd: number, path: number, mode: number) => at(dirfd, path, () => sys('access', getString(path), mode)),
+
+	SYS_getcwd: (ptr: number, size: number) => {
+		const value = syscall_raw('getcwd');
+		if (value < 0) return BigInt(value);
+		const cwd = returned();
+		if (cwd.byteLength + 1 > size) return -BigInt(Errno.ERANGE);
+		sync();
+		bytes.set(cwd, ptr);
+		bytes[ptr + cwd.byteLength] = 0;
+		return BigInt(ptr);
+	},
+	SYS_chdir: (path: number) => sys('chdir', getString(path)),
+
+	SYS_mkdir: (path: number, mode: number) => sys('mkdir', getString(path), mode),
+	SYS_rmdir: (path: number) => sys('rmdir', getString(path)),
+	SYS_unlink: (path: number) => sys('unlink', getString(path)),
+	SYS_unlinkat: (dirfd: number, path: number, flags: number) => at(dirfd, path, () => sys(flags & 0x200 ? 'rmdir' : 'unlink', getString(path))),
+	SYS_rename: (from: number, to: number) => sys('rename', getString(from), getString(to)),
+	SYS_symlink: (target: number, path: number) => sys('symlink', getString(target), getString(path)),
+	SYS_link: (target: number, path: number) => sys('link', getString(target), getString(path)),
+	SYS_readlink: (path: number, ptr: number, size: number) => {
+		const value = syscall_raw('readlink', getString(path));
+		if (value < 0) return BigInt(value);
+		return BigInt(give(ptr, size));
+	},
+
+	SYS_getdents64: (fd: number, ptr: number, size: number) => {
+		const value = syscall_raw('getdents', fd);
+		if (value < 0) return BigInt(value);
+		return BigInt(give(ptr, size));
+	},
+
+	SYS_truncate: (path: number, length: number) => sys('truncate', getString(path), length),
+	SYS_chmod: (path: number, mode: number) => sys('chmod', getString(path), mode),
+	SYS_fchmod: (fd: number, mode: number) => sys('fchmod', fd, mode),
+	SYS_chown: (path: number, uid: number, gid: number) => sys('chown', getString(path), uid, gid),
+	SYS_fchown: (fd: number, uid: number, gid: number) => sys('fchown', fd, uid, gid),
+
+	// Processes
+	SYS_exit: (code: number) => sys('exit', code),
+	SYS_exit_group: (code: number) => sys('exit', code),
+	SYS_getpid: () => sys('getpid'),
+	SYS_getppid: () => sys('getppid'),
+	SYS_getuid: () => sys('getuid'),
+	SYS_geteuid: () => sys('geteuid'),
+	SYS_getgid: () => sys('getgid'),
+	SYS_getegid: () => sys('getegid'),
+	/** There are no threads within a process here, so a thread id is the process id */
+	SYS_gettid: () => sys('getpid'),
+	SYS_set_tid_address: () => sys('getpid'),
+
+	// Signals
+	SYS_kill: (pid: number, signal: number) => sys('kill', pid, signal),
+	SYS_tkill: (_tid: number, signal: number) => sys('kill', getpid(), signal),
+	/**
+	 * Handlers are not wired through yet: musl installs them on its way up and would take a
+	 * failure as fatal, so these succeed without promising delivery.
+	 */
+	SYS_rt_sigaction: () => 0n,
+	SYS_rt_sigprocmask: () => 0n,
+
+	/**
+	 * A real futex, on linear memory. The waiting is what a thread does anyway, and shared
+	 * memory is exactly what `Atomics` wants.
+	 */
+	SYS_futex: (ptr: number, op: number, value: number, timeout: number) => {
+		// The private flag says nothing here: there is one address space either way
+		switch (op & ~128) {
+			case 0: {
+				const ms = timeout ? Number(view.getBigInt64(timeout, true)) * 1000 + view.getInt32(timeout + 8, true) / 1e6 : Infinity;
+				const woke = Atomics.wait(words, word(ptr), value, ms);
+				if (woke == 'not-equal') return -BigInt(Errno.EAGAIN);
+				if (woke == 'timed-out') return -BigInt(Errno.ETIMEDOUT);
+				return 0n;
+			}
+			case 1:
+				return BigInt(Atomics.notify(words, word(ptr), value));
+			default:
+				return -BigInt(Errno.ENOSYS);
+		}
+	},
+	SYS_sched_yield: () => 0n,
+
+	SYS_uname: (ptr: number) => {
+		const value = syscall_raw('uname');
+		if (value < 0) return BigInt(value);
+		give(ptr);
+		return 0n;
+	},
+
+	// Time. There is no clock syscall: the host's is as good an answer as the kernel could give.
+	SYS_clock_gettime: (_clock: number, ptr: number) => timespec(ptr, Date.now()),
+	SYS_gettimeofday: (ptr: number) => {
+		if (!ptr) return 0n;
+		const now = Date.now();
+		sync();
+		view.setBigInt64(ptr, BigInt(Math.floor(now / 1000)), true);
+		view.setBigInt64(ptr + 8, BigInt(Math.round((now % 1000) * 1000)), true);
+		return 0n;
+	},
+	SYS_clock_getres: (_clock: number, ptr: number) => timespec(ptr, 1),
+
+	SYS_getrandom: (ptr: number, length: number) => {
+		const random = new Uint8Array(length);
+		crypto.getRandomValues(random);
+		sync();
+		bytes.set(random, ptr);
+		return BigInt(length);
+	},
+
+	/** Positioned reads and writes, which the kernel takes as an argument rather than a seek */
+	SYS_pread64: (fd: number, ptr: number, count: number, offset: bigint) => {
+		const length = syscall_raw('read', fd, count, Number(offset));
+		if (length < 0) return BigInt(length);
+		return BigInt(give(ptr, count));
+	},
+	SYS_pwrite64: (fd: number, ptr: number, count: number, offset: bigint) => sys('write', fd, read_at(ptr, count), Number(offset)),
+
+	SYS_mkdirat: (dirfd: number, path: number, mode: number) => at(dirfd, path, () => sys('mkdir', getString(path), mode)),
+	SYS_readlinkat: (dirfd: number, path: number, ptr: number, size: number) =>
+		at(dirfd, path, () => {
+			const value = syscall_raw('readlink', getString(path));
+			if (value < 0) return BigInt(value);
+			return BigInt(give(ptr, size));
+		}),
+	SYS_fchmodat: (dirfd: number, path: number, mode: number) => at(dirfd, path, () => sys('chmod', getString(path), mode)),
+	SYS_fchownat: (dirfd: number, path: number, uid: number, gid: number) => at(dirfd, path, () => sys('chown', getString(path), uid, gid)),
+	SYS_symlinkat: (target: number, dirfd: number, path: number) => at(dirfd, path, () => sys('symlink', getString(target), getString(path))),
+
+	/** The mask is not kept anywhere, so this reports the usual one and takes no notice of a new one */
+	SYS_umask: () => 0o022n,
+
+	// Limits, which nothing here enforces
+	SYS_getrlimit: () => 0n,
+	SYS_setrlimit: () => 0n,
+	SYS_prlimit64: () => 0n,
+
+	/*
+	 * `setjmp` and `longjmp`, which are not syscalls: a wasm module cannot save and restore a stack, so
+	 * WALI imports them from its host. Its own host does not implement them either — `setjmp` reports
+	 * that there is nothing saved and `longjmp` gives up — so this does the same rather than pretend.
+	 */
+	setjmp: () => {
+		missing.add('setjmp');
+		return 0;
+	},
+	sigsetjmp: () => {
+		missing.add('sigsetjmp');
+		return 0;
+	},
+	longjmp: () => {
+		missing.add('longjmp');
+		return void syscall_raw('exit', 1);
+	},
+
+	SYS_faccessat2: (dirfd: number, path: number, mode: number) => at(dirfd, path, () => sys('access', getString(path), mode)),
+	/** Process groups are not a thing here, so every process is its own leader */
+	SYS_getpgid: () => sys('getpid'),
+	SYS_getsid: () => sys('getpid'),
+	SYS_setpgid: () => 0n,
+	SYS_setsid: () => sys('getpid'),
+} satisfies WebAssembly.ModuleImports;
+
+/** What a module asked for and did not get, so a program that misbehaves says why once */
+export const missing = new Set<string>();
+
+/**
+ * The `wali` imports for one module.
+ */
+function link(module: WebAssembly.Module): WebAssembly.ModuleImports {
+	const calls = wali as unknown as Record<string, WebAssembly.ImportValue>;
+	const linked: Record<string, WebAssembly.ImportValue> = Object.create(null);
+
+	for (const { module: from, name } of WebAssembly.Module.imports(module)) {
+		if (from != 'wali') continue;
+		linked[name] = calls[name] ?? not_implemented(name);
+	}
+
+	return linked;
+}
+
+/** Every WALI syscall answers with an `i64`, so one that is not here can say so in the same shape */
+function not_implemented(name: string): () => bigint {
+	return () => {
+		missing.add(name);
+		return -BigInt(Errno.ENOSYS);
+	};
+}
+
+/** Write a `struct timespec` from milliseconds */
+function timespec(ptr: number, ms: number): bigint {
+	if (!ptr) return 0n;
+	sync();
+	view.setBigInt64(ptr, BigInt(Math.floor(ms / 1000)), true);
+	view.setBigInt64(ptr + 8, BigInt(Math.round((ms % 1000) * 1e6)), true);
+	return 0n;
+}
+
+/** `stat` and `lstat` both leave the structure in the region, so both come back the same way */
+function stat_at(name: 'stat' | 'lstat', path: string, ptr: number): bigint {
+	const value = syscall_raw(name, path);
+	if (value < 0) return BigInt(value);
+	give(ptr);
+	return 0n;
+}
+
+/**
+ * The `*at` calls, which the kernel has no equivalent of.
+ * Relative to the working directory is the same thing as the plain call; relative to some other
+ * descriptor is not, and saying so is better than resolving it against the wrong directory.
+ */
+function at(dirfd: number, path: number, call: () => bigint): bigint {
+	if (dirfd != AT_FDCWD && !getString(path).startsWith('/')) return -BigInt(Errno.ENOSYS);
+	return call();
+}
+
+/** The `struct iovec` array at a pointer. Its members are pointers, so it is 8 bytes, not 16. */
+function iovecs(ptr: number, count: number): { base: number; length: number }[] {
+	sync();
+	const parts = [];
+	for (let i = 0; i < count; i++) {
+		parts.push({ base: view.getUint32(ptr + i * 8, true), length: view.getUint32(ptr + i * 8 + 4, true) });
+	}
+	return parts;
+}
+
+/**
+ * Load a WALI module and run it.
+ *
+ * This comes back only if the program returns from `main` without exiting, since `__proc_exit` is a
+ * call to `exit` and the kernel tears the thread down there.
+ */
+export async function run(source: BufferSource): Promise<number> {
+	const module = await WebAssembly.compile(source);
+	const instance = await WebAssembly.instantiate(module, { wali: link(module) });
+	const exports = instance.exports as { memory: WebAssembly.Memory; _start: () => void };
+
+	memory = exports.memory;
+	tracing = !!environ().WALI_TRACE;
+	sync();
+
+	// Mappings start after the memory the module came up with, which is where WALI's host puts them
+	mmapBase = bytes.byteLength;
+	mmapLength = 0;
+
+	exports._start();
+	return 0;
+}
