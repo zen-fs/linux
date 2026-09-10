@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The process and signal syscalls */
-import { init, syscall } from './base.js';
+import type { UtsNameFields } from './abi.js';
+import { read_utsname, UtsName } from './abi.js';
+import { init, returned, syscall } from './base.js';
 
 export { off_signal, on_signal, ready, type SignalHandler } from './base.js';
 
@@ -69,4 +71,10 @@ export function wait(pid: number = -1): number {
 
 export function kill(pid: number, signal: number): void {
 	syscall('kill', pid, signal);
+}
+
+export function uname(): UtsNameFields {
+	syscall('uname');
+	const region = returned();
+	return read_utsname(new UtsName(region.buffer, region.byteOffset));
 }

@@ -210,6 +210,31 @@ export class UtsName extends struct('utsname', {
 	domainname: t.char(65),
 }) {}
 
+export interface UtsNameFields {
+	sysname: string;
+	nodename: string;
+	release: string;
+	version: string;
+	machine: string;
+	domainname: string;
+}
+
+export function read_utsname(uts: UtsName): UtsNameFields {
+	const name = (field: Uint8Array) => {
+		const end = field.indexOf(0);
+		return decodeUTF8(end < 0 ? field : field.subarray(0, end));
+	};
+
+	return {
+		sysname: name(uts.sysname),
+		nodename: name(uts.nodename),
+		release: name(uts.release),
+		version: name(uts.version),
+		machine: name(uts.machine),
+		domainname: name(uts.domainname),
+	};
+}
+
 /**
  * The terminal ioctls, from `<asm-generic/ioctls.h>`.
  * These are the ones with an answer that doesn't fit in the return value.
