@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { FromThread, SyscallMessage, ToThread } from '@zenfs/linux/uapi/abi';
 import { defaultRegionSize, regionOffset, SyscallData, SyscallStatus } from '@zenfs/linux/uapi/abi';
-import { Errno } from 'kerium';
+import { Errno, withErrno } from 'kerium';
 import { err } from 'kerium/log';
 import type { Process } from './process.js';
 import type { Signal } from './signal.js';
@@ -153,6 +153,9 @@ export class Thread {
 		public readonly proc: Process,
 		regionSize: number = defaultRegionSize
 	) {
+		// Serve it with `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`.'
+		if (!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated) throw withErrno('ENOSYS', 'Missing SharedArrayBuffer!');
+
 		this.page = new SharedArrayBuffer(regionOffset + regionSize);
 		this.control = new SyscallData(this.page);
 		this.region = new Uint8Array(this.page, regionOffset, regionSize);
