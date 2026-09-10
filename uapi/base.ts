@@ -154,6 +154,11 @@ export async function syscall_async<K extends keyof Syscalls>(name: K, ...args: 
 	return value;
 }
 
+/** The signals raised on this thread that have not been delivered yet, as `1 << sig`.. */
+export function pending(): number {
+	return control?.signals ?? 0;
+}
+
 /**
  * What the last syscall left in the region, e.g. the bytes a `read` moved or the `struct stat` a
  * `stat` filled. It is only good until the next syscall.

@@ -3,7 +3,7 @@ import { Errno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
 import { Ioctl, read_termios, TermiosAbi, Winsize } from './abi.js';
 import type { Syscalls } from './abi.js';
-import { returned, syscall_raw } from './base.js';
+import { pending, returned, syscall_raw } from './base.js';
 import { environ, argv as get_argv, getpid } from './process.js';
 
 /** The flags `__get_init_envfile` needs to leave the environment somewhere musl can read it */
@@ -112,6 +112,11 @@ function mmap(length: number): number {
 	mmapLength += size;
 	return address;
 }
+
+const sigactionSize = 32;
+
+/** What each signal was last given, so `sigaction` can report the old disposition. */
+const dispositions = new Map<number, Uint8Array>();
 
 /** The i32 at a wasm address, for the futex calls */
 function word(ptr: number): number {
@@ -330,12 +335,58 @@ export const wali = {
 	// Signals
 	SYS_kill: (pid: number, signal: number) => sys('kill', pid, signal),
 	SYS_tkill: (_tid: number, signal: number) => sys('kill', getpid(), signal),
-	/**
-	 * Handlers are not wired through yet: musl installs them on its way up and would take a
-	 * failure as fatal, so these succeed without promising delivery.
-	 */
-	SYS_rt_sigaction: () => 0n,
+	SYS_rt_sigaction: (signal: number, act: number, old: number) => {
+		const previous = dispositions.get(signal);
+
+		if (act) {
+			const disposition = read_at(act, sigactionSize);
+			const handler = new DataView(disposition.buffer, disposition.byteOffset).getUint32(0, true);
+			const result = sys('sigaction', signal, handler != 0);
+			if (result < 0n) return result;
+			dispositions.set(signal, disposition);
+		}
+
+		if (old) {
+			sync();
+			if (previous) bytes.set(previous, old);
+			else bytes.fill(0, old, old + sigactionSize);
+		}
+
+		return 0n;
+	},
 	SYS_rt_sigprocmask: () => 0n,
+
+	SYS_rt_sigpending: (ptr: number, size: number) => {
+		if (!ptr) return -BigInt(Errno.EFAULT);
+
+		sync();
+		bytes.fill(0, ptr, ptr + size);
+		view.setUint32(ptr, pending() >>> 1, true);
+		return 0n;
+	},
+	SYS_setitimer: (which: number, next: number, previous: number) => {
+		const interval = next ? duration(next, 1e3) : 0;
+		const value = next ? duration(next + 16, 1e3) : 0;
+
+		const result = syscall_raw('setitimer', which, Math.max(0, value), Math.max(0, interval));
+		if (result < 0) return BigInt(result);
+
+		if (previous) {
+			const region = returned();
+			const answer = new DataView(region.buffer, region.byteOffset);
+			write_timeval(previous, answer.getFloat64(8, true));
+			write_timeval(previous + 16, answer.getFloat64(0, true));
+		}
+
+		return 0n;
+	},
+	SYS_alarm: (seconds: number) => {
+		const result = syscall_raw('setitimer', 0, seconds * 1000, 0);
+		if (result < 0) return BigInt(result);
+
+		const region = returned();
+		return BigInt(Math.ceil(new DataView(region.buffer, region.byteOffset).getFloat64(0, true) / 1000));
+	},
 
 	/**
 	 * A real futex, on linear memory. The waiting is what a thread does anyway, and shared
@@ -366,7 +417,6 @@ export const wali = {
 		return 0n;
 	},
 
-	// Time. There is no clock syscall: the host's is as good an answer as the kernel could give.
 	SYS_clock_gettime: (_clock: number, ptr: number) => timespec(ptr, Date.now()),
 	SYS_gettimeofday: (ptr: number) => {
 		if (!ptr) return 0n;
@@ -544,6 +594,12 @@ function pipe_fds(ptr: number, flags: number): bigint {
 	view.setInt32(ptr + 4, answer.getInt32(4, true), true);
 
 	return 0n;
+}
+
+function write_timeval(ptr: number, ms: number): void {
+	sync();
+	view.setBigInt64(ptr, BigInt(Math.floor(ms / 1000)), true);
+	view.setBigInt64(ptr + 8, BigInt(Math.round((ms % 1000) * 1000)), true);
 }
 
 /** `struct pollfd` is `{ int fd; short events; short revents; }`, so 8 bytes with the answer at 6 */

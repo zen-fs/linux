@@ -418,6 +418,8 @@ export interface Syscalls {
 	sigaction(signal: number, caught: boolean): number;
 	poll(fds: readonly { fd: number; events: number }[], timeout: number): number;
 	pipe(flags: number): number;
+
+	setitimer(which: number, value: number, interval: number): number;
 	// The system
 	uname(): number;
 }

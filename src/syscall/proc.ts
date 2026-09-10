@@ -38,6 +38,18 @@ define_syscall('execve', async (proc, path, argv, env) => {
 
 define_syscall('wait', (proc, pid) => proc.wait(pid));
 
+define_syscall('setitimer', (proc, which, value, interval) => {
+	const previous = proc.setitimer(which, value, interval);
+
+	const { region } = thread_of(proc);
+	const answer = new DataView(region.buffer, region.byteOffset);
+	answer.setFloat64(0, previous.value, true);
+	answer.setFloat64(8, previous.interval, true);
+	thread_of(proc).filled(16);
+
+	return 0;
+});
+
 define_syscall('kill', (proc, pid, signal) => {
 	const target = processes.get(pid);
 	if (!target) throw withErrno('ESRCH');

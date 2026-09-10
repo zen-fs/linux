@@ -27,6 +27,13 @@ export interface ProcessInit {
 
 export const processes = new Map<number, Process>();
 
+/** What each `ITIMER_*` raises when it goes off. */
+const itimer_signals: Record<number, Signal> = {
+	0: Signal.ALRM,
+	1: Signal.VTALRM,
+	2: Signal.PROF,
+};
+
 /** The process that is running right now, i.e. what `current` points at in Linux. */
 export let current: Process | undefined;
 
@@ -228,6 +235,8 @@ export class Process {
 		if (this.code !== undefined) return;
 		this.code = code;
 
+		for (const which of [...this.timers.keys()]) this.setitimer(which, 0, 0);
+
 		this.thread?.kill();
 		this.thread = undefined;
 
@@ -292,6 +301,38 @@ export class Process {
 	}
 
 	/** Stop the process and drop what is left of it, without anyone waiting for its exit code */
+	/**
+	 * The interval timers, by `ITIMER_*`, i.e. `signal->real_timer` and the two that count CPU time.
+	 */
+	protected readonly timers = new Map<number, { started: number; value: number; interval: number; timer: ReturnType<typeof setTimeout> }>();
+
+	/**
+	 * Arm or disarm an interval timer, i.e. `setitimer`.
+	 */
+	public setitimer(which: number, value: number, interval: number): { value: number; interval: number } {
+		const previous = this.timers.get(which);
+
+		const remaining = previous ? Math.max(0, previous.started + previous.value - Date.now()) : 0;
+
+		if (previous) {
+			clearTimeout(previous.timer);
+			this.timers.delete(which);
+		}
+
+		if (value > 0) {
+			const fire = (): void => {
+				if (interval > 0) this.setitimer(which, interval, interval);
+				else this.timers.delete(which);
+
+				this.kill(itimer_signals[which] ?? Signal.ALRM);
+			};
+
+			this.timers.set(which, { started: Date.now(), value, interval, timer: setTimeout(fire, value) });
+		}
+
+		return { value: remaining, interval: previous?.interval ?? 0 };
+	}
+
 	public dispose(): void {
 		this.exit(this.code ?? 0);
 		if (this.code !== undefined && processes.get(this.pid) === this) this.reap();
