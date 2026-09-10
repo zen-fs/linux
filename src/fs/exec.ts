@@ -5,7 +5,7 @@ import { UV } from 'kerium';
 import type { ProcessInit } from '../process.js';
 import { Process } from '../process.js';
 import { Thread } from '../thread.js';
-import binfmt_js from './binfmt_js.js';
+import { decodeASCII } from 'utilium';
 
 export const binPrmBufSize = 256;
 
@@ -22,16 +22,24 @@ export interface BinPrm {
 
 /**
  * A way of loading a program, like `struct linux_binfmt`.
- *
- * The kernel only picks the format; the loading itself happens on the process' own thread, so all a
- * format contributes is the module that thread imports to do it.
  */
 export interface BinFmt {
 	name: string;
 	matches(prm: BinPrm): boolean;
-	/** What the thread imports before the program, to put whatever it needs in place */
-	runtime?: string;
+	/** What runs a program of this format, or nothing when the program runs itself */
+	interpreter?: string;
 }
+
+// A script has no magic number of its own, so this format takes anything that isn't one of these.
+const nonJSMagic = ['\0asm', '\x7fELF'];
+
+const binfmt_js = {
+	name: 'js',
+	interpreter: '/bin/node',
+	matches({ buf }: BinPrm): boolean {
+		return !nonJSMagic.some(string => decodeASCII(buf.subarray(0, string.length)) === string) && !buf.includes(0);
+	},
+} satisfies BinFmt;
 
 /** The registered formats, in the order they are tried */
 export const binfmts = new Set<BinFmt>([binfmt_js]);
@@ -74,12 +82,23 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 
 	const fmt = search_binary_handler({ proc, filename, buf: buffer.subarray(0, read), argv, env: proc.env });
 
+	// The thread runs the interpreter, so that is what the kernel loads. A program with none is its own.
+	const interpreter = fmt.interpreter ? fs.realpathSync.call($, fmt.interpreter) : filename;
+	const source = read_program(proc, interpreter);
+
 	proc.thread?.kill();
 
 	proc.thread = new Thread(proc);
 	if (proc.tty) proc.tty.foreground = proc;
 
-	await proc.thread.start(filename, fmt.runtime);
+	await proc.thread.start(filename, interpreter, source);
+}
+
+/** Everything in an executable, which for an interpreter is what the thread is started on */
+function read_program(proc: Process, path: string): Uint8Array {
+	fs.accessSync.call(proc.context, path, X_OK);
+	const data = fs.readFileSync.call(proc.context, path) as unknown as Uint8Array;
+	return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 }
 
 /**

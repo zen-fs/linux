@@ -426,11 +426,7 @@ export interface InitMessage {
 	cwd: string;
 	/** The program to run, which the thread loads itself */
 	exe: string;
-	/**
-	 * A module the thread imports before the program, so whatever the program expects to find can be
-	 * put there. This is where an implementation of `node:fs` would come from.
-	 */
-	runtime?: string;
+	interpreter: string;
 }
 
 /** A syscall on its way to the kernel */

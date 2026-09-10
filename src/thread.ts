@@ -16,16 +16,7 @@ export interface HostThread {
 	onError(handler: (error: unknown) => void): void;
 }
 
-export type ThreadFactory = (entry: URL) => HostThread | Promise<HostThread>;
-
-/**
- * Where a thread starts. This is the built bootstrap; point it somewhere else to run from source.
- */
-export let threadEntry: URL = new URL('./uapi/bootstrap.js', import.meta.url);
-
-export function set_thread_entry(entry: URL): void {
-	threadEntry = entry;
-}
+export type ThreadFactory = (interpreter: Uint8Array) => HostThread | Promise<HostThread>;
 
 /** The parts of a web worker this uses, so the kernel does not need the DOM to be typed */
 interface WebWorker {
@@ -57,7 +48,33 @@ const WebWorker = (globalThis as { Worker?: new (url: URL, options?: { type?: st
 /** Kept out of the import so it stays opaque to bundlers; a browser build never reaches it */
 const node_worker_threads = 'node:' + 'worker_threads';
 
-async function host_thread(entry: URL): Promise<HostThread> {
+const entries = new Map<Uint8Array, URL>();
+
+function entry_for(interpreter: Uint8Array): URL {
+	let entry = entries.get(interpreter);
+	if (entry) return entry;
+
+	if (WebWorker) {
+		const blob = new Blob([interpreter as Uint8Array<ArrayBuffer>], { type: 'text/javascript' });
+		entry = new URL(URL.createObjectURL(blob));
+	} else {
+		// Node won't take a blob URL for a worker, but it does read a module out of a `data:` URL
+		entry = new URL('data:text/javascript;base64,' + base64(interpreter));
+	}
+
+	entries.set(interpreter, entry);
+	return entry;
+}
+
+function base64(data: Uint8Array): string {
+	let text = '';
+	for (const byte of data) text += String.fromCharCode(byte);
+	return btoa(text);
+}
+
+async function host_thread(interpreter: Uint8Array): Promise<HostThread> {
+	const entry = entry_for(interpreter);
+
 	if (WebWorker) {
 		const worker = new WebWorker(entry, { type: 'module' });
 
@@ -142,11 +159,15 @@ export class Thread {
 	}
 
 	/**
-	 * Start the thread on a program. It loads the program itself; the kernel only says which.
-	 * @param runtime what the thread imports first, from the format the program is in
+	 * Start the thread.
+	 *
+	 * The kernel loads the interpreter and nothing else: the thread runs that, and the interpreter
+	 * goes and gets the program itself. When a program needs no interpreter it is its own.
+	 *
+	 * @param source the interpreter's bytes, read out of the file system
 	 */
-	public async start(exe: string, runtime?: string): Promise<void> {
-		const host = (this.host = await create_thread(threadEntry));
+	public async start(exe: string, interpreter: string, source: Uint8Array): Promise<void> {
+		const host = (this.host = await create_thread(source));
 
 		host.onMessage(message => {
 			if (message.$ == 'syscall') void this.syscall(message);
@@ -162,7 +183,7 @@ export class Thread {
 			env: this.proc.env,
 			cwd: this.proc.cwd,
 			exe,
-			runtime,
+			interpreter,
 		});
 	}
 
