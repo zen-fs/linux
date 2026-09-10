@@ -125,8 +125,9 @@ function word(ptr: number): number {
 }
 
 function sys<K extends keyof Syscalls>(name: K, ...args: Parameters<Syscalls[K]>): bigint {
-	const value = syscall_raw(name, ...args);
-	if (tracing) trace(name, args, value);
+	const narrowed = args.map(arg => (typeof arg == 'bigint' ? Number(arg) : arg)) as Parameters<Syscalls[K]>;
+	const value = syscall_raw(name, ...narrowed);
+	if (tracing) trace(name, narrowed, value);
 	return BigInt(value);
 }
 
@@ -235,7 +236,7 @@ export const wali = {
 	},
 
 	SYS_lseek: (fd: number, offset: bigint, whence: number) => sys('lseek', fd, Number(offset), whence),
-	SYS_ftruncate: (fd: number, length: number) => sys('ftruncate', fd, length),
+	SYS_ftruncate: (fd: number, length: bigint) => sys('ftruncate', fd, Number(length)),
 	SYS_fsync: (fd: number) => sys('fsync', fd),
 	SYS_fdatasync: (fd: number) => sys('fdatasync', fd),
 	SYS_dup: (fd: number) => sys('dup', fd),
@@ -313,7 +314,7 @@ export const wali = {
 		return BigInt(give(ptr, size));
 	},
 
-	SYS_truncate: (path: number, length: number) => sys('truncate', getString(path), length),
+	SYS_truncate: (path: number, length: bigint) => sys('truncate', getString(path), Number(length)),
 	SYS_chmod: (path: number, mode: number) => sys('chmod', getString(path), mode),
 	SYS_fchmod: (fd: number, mode: number) => sys('fchmod', fd, mode),
 	SYS_chown: (path: number, uid: number, gid: number) => sys('chown', getString(path), uid, gid),
