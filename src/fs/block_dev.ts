@@ -7,7 +7,7 @@ import { Class } from '../drivers/base/class.js';
 import type { DeviceFile, DeviceIoctl, FileOperations } from './devtmpfs.js';
 import { KObject, sysfs_create_link, sysfs_remove_link } from '../kobject.js';
 import type { Module } from '../module.js';
-import { assignWithDefaults, pick } from 'utilium';
+import { assignWithDefaults, memoize, pick } from 'utilium';
 
 export const blockDevMajorMax = 512;
 
@@ -220,57 +220,55 @@ export class BlockDevice {
 		this.#readonly = value;
 	}
 
-	/**
-	 * Everything the block layer does before handing an operation to the driver:
-	 * offsets are made relative to the whole disk and clamped to this device's range,
-	 * which is what keeps a write to a partition inside it. Linux does this in `blk_partition_remap`.
-	 */
-	public readonly ops: FileOperations = {
-		open: file => this.disk.ops.open?.(file),
-		release: file => this.disk.ops.release?.(file),
-		sync: file => this.disk.ops.sync?.(file),
+	@memoize
+	public get ops(): FileOperations {
+		return {
+			open: file => this.disk.ops.open?.(file),
+			release: file => this.disk.ops.release?.(file),
+			sync: file => this.disk.ops.sync?.(file),
 
-		read: (file, buffer, start, end) => {
-			const { read } = this.disk.ops;
-			if (!read) throw withErrno('EINVAL');
+			read: (file, buffer, start, end) => {
+				const { read } = this.disk.ops;
+				if (!read) throw withErrno('EINVAL');
 
-			const base = this.start * sectorSize;
-			const limit = this.nr_sectors * sectorSize;
+				const base = this.start * sectorSize;
+				const limit = this.nr_sectors * sectorSize;
 
-			// Past the end of the device, so there is nothing to read
-			if (start >= limit) return;
+				// Past the end of the device, so there is nothing to read
+				if (start >= limit) return;
 
-			read(file, buffer, base + start, base + Math.min(end, limit));
-		},
-
-		write: (file, buffer, offset) => {
-			const { write } = this.disk.ops;
-			if (!write) throw withErrno('EINVAL');
-			if (this.read_only) throw withErrno('EROFS');
-
-			const limit = this.nr_sectors * sectorSize;
-			if (offset >= limit) throw withErrno('ENOSPC');
-
-			// A write that runs off the end is cut short rather than spilling into the next partition
-			const data = buffer.subarray(0, limit - offset);
-
-			write(file, data, this.start * sectorSize + offset);
-		},
-
-		ioctl: {
-			...this.disk.ops.ioctl,
-
-			[BlkIoctl.RoSet]: ($, file, read_only: boolean): void => {
-				this.read_only = read_only;
+				read(file, buffer, base + start, base + Math.min(end, limit));
 			},
-			[BlkIoctl.RoGet]: (): boolean => this.read_only,
-			[BlkIoctl.GetSize]: (): number => this.nr_sectors,
-			[BlkIoctl.GetSize64]: (): number => this.nr_sectors * sectorSize,
-			[BlkIoctl.SSzGet]: (): number => sectorSize,
-			[BlkIoctl.BSzGet]: (): number => sectorSize,
-			[BlkIoctl.PbSzGet]: (): number => sectorSize,
-		},
-	};
+
+			write: (file, buffer, offset) => {
+				const { write } = this.disk.ops;
+				if (!write) throw withErrno('EINVAL');
+				if (this.read_only) throw withErrno('EROFS');
+
+				const limit = this.nr_sectors * sectorSize;
+				if (offset >= limit) throw withErrno('ENOSPC');
+
+				// A write that runs off the end is cut short rather than spilling into the next partition
+				const data = buffer.subarray(0, limit - offset);
+
+				write(file, data, this.start * sectorSize + offset);
+			},
+
+			ioctl: {
+				...this.disk.ops.ioctl,
+
+				[BlkIoctl.RoSet]: ($, file, read_only: boolean): void => {
+					this.read_only = read_only;
+				},
+				[BlkIoctl.RoGet]: (): boolean => this.read_only,
+				[BlkIoctl.GetSize]: (): number => this.nr_sectors,
+				[BlkIoctl.GetSize64]: (): number => this.nr_sectors * sectorSize,
+				[BlkIoctl.SSzGet]: (): number => sectorSize,
+				[BlkIoctl.BSzGet]: (): number => sectorSize,
+				[BlkIoctl.PbSzGet]: (): number => sectorSize,
+			},
+		};
+	}
 
 	/**
 	 * The attributes this gets in sysfs. Sizes are all in sectors.
