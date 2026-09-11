@@ -28,7 +28,33 @@ export interface BinFmt {
 	matches(prm: BinPrm): boolean;
 	/** What runs a program of this format, or nothing when the program runs itself */
 	interpreter?: string;
+	/** Rewrite what is being loaded, the way a `#!` line does. The search then starts over on the new program. */
+	load?(prm: BinPrm): void;
 }
+
+/** How many times a program may be rewritten into another before `execve` gives up */
+const maxDepth = 5;
+
+const binfmt_script = {
+	name: 'script',
+	matches({ buf }: BinPrm): boolean {
+		return decodeASCII(buf.subarray(0, 2)) === '#!';
+	},
+	load(prm: BinPrm): void {
+		let text = decodeASCII(prm.buf).slice(2);
+
+		const end = /[\n\0]/.exec(text)?.index ?? -1;
+		const truncated = end < 0;
+		if (!truncated) text = text.slice(0, end);
+
+		const [, name, arg] = /^[ \t]*([^ \t]*)[ \t]*(.*?)[ \t]*$/.exec(text)!;
+
+		if (!name || (truncated && name.length == text.trimStart().length)) throw UV('ENOEXEC', 'execve', prm.filename);
+
+		prm.argv = [name, ...(arg ? [arg] : []), prm.filename, ...prm.argv.slice(1)];
+		prm.filename = name;
+	},
+} satisfies BinFmt;
 
 // A script has no magic number of its own, so this format takes anything that isn't one of these.
 const nonJSMagic = ['\0asm', '\x7fELF'];
@@ -50,7 +76,7 @@ const binfmt_wasm = {
 } satisfies BinFmt;
 
 /** The registered formats, in the order they are tried */
-export const binfmts = new Set<BinFmt>([binfmt_wasm, binfmt_js]);
+export const binfmts = new Set<BinFmt>([binfmt_script, binfmt_wasm, binfmt_js]);
 
 /** Hand the program to the first format that recognizes it */
 export function search_binary_handler(prm: BinPrm): BinFmt {
@@ -71,27 +97,36 @@ export function search_binary_handler(prm: BinPrm): BinFmt {
 export async function execve(proc: Process, path: string, argv: string[] = [path], env: Record<string, string> = proc.env): Promise<void> {
 	const $ = proc.context;
 
-	const filename = fs.realpathSync.call($, path);
-	fs.accessSync.call($, filename, X_OK);
+	const prm: BinPrm = { proc, filename: fs.realpathSync.call($, path), buf: new Uint8Array(0), argv, env: { ...env } };
 
-	const buffer = new Uint8Array(binPrmBufSize);
-	const fd = fs.openSync.call($, filename, O_RDONLY);
-	let read: number;
-	try {
-		read = fs.readSync.call($, fd, buffer, 0, binPrmBufSize, 0);
-	} finally {
-		fs.closeSync.call($, fd);
+	let fmt: BinFmt;
+	for (let depth = 0; ; depth++) {
+		if (depth > maxDepth) throw UV('ELOOP', 'execve', path);
+
+		fs.accessSync.call($, prm.filename, X_OK);
+
+		const buffer = new Uint8Array(binPrmBufSize);
+		const fd = fs.openSync.call($, prm.filename, O_RDONLY);
+		try {
+			prm.buf = buffer.subarray(0, fs.readSync.call($, fd, buffer, 0, binPrmBufSize, 0));
+		} finally {
+			fs.closeSync.call($, fd);
+		}
+
+		fmt = search_binary_handler(prm);
+		if (!fmt.load) break;
+
+		fmt.load(prm);
+		prm.filename = fs.realpathSync.call($, prm.filename);
 	}
 
-	proc.argv = argv;
-	proc.exe = filename;
-	proc.env = { ...env };
+	proc.argv = prm.argv;
+	proc.exe = prm.filename;
+	proc.env = prm.env;
 	proc.code = undefined;
 
-	const fmt = search_binary_handler({ proc, filename, buf: buffer.subarray(0, read), argv, env: proc.env });
-
 	// The thread runs the interpreter, so that is what the kernel loads. A program with none is its own.
-	const interpreter = fmt.interpreter ? fs.realpathSync.call($, fmt.interpreter) : filename;
+	const interpreter = fmt.interpreter ? fs.realpathSync.call($, fmt.interpreter) : prm.filename;
 	const source = read_program(proc, interpreter);
 
 	proc.thread?.kill();
@@ -99,7 +134,7 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 	proc.thread = new Thread(proc);
 	if (proc.tty) proc.tty.foreground = proc;
 
-	await proc.thread.start(filename, interpreter, source);
+	await proc.thread.start(prm.filename, interpreter, source);
 }
 
 /** Everything in an executable, which for an interpreter is what the thread is started on */
