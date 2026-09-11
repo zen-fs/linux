@@ -168,6 +168,25 @@ export function realpath(path: string): string {
 	return decodeUTF8(returned());
 }
 
+export function getxattr(path: string, name: string, noFollow: boolean = false): Uint8Array {
+	syscall('getxattr', path, name, noFollow);
+	return returned().slice();
+}
+
+export function setxattr(path: string, name: string, value: Uint8Array, noFollow: boolean = false): void {
+	syscall('setxattr', path, name, value, noFollow);
+}
+
+export function removexattr(path: string, name: string, noFollow: boolean = false): void {
+	syscall('removexattr', path, name, noFollow);
+}
+
+export function listxattr(path: string, noFollow: boolean = false): string[] {
+	syscall('listxattr', path, noFollow);
+	const names = decodeUTF8(returned());
+	return names ? names.split('\0') : [];
+}
+
 export function truncate(path: string, length: number = 0): void {
 	syscall('truncate', path, length);
 }

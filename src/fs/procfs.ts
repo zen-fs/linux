@@ -2,6 +2,7 @@
 import type { FSContext } from '@zenfs/core';
 import { boundContexts, defaultContext } from '@zenfs/core';
 import { withErrno } from 'kerium';
+import { cap_last, initial_capabilities } from '../capability.js';
 import { initConfig } from '../init.js';
 import { modules } from '../module.js';
 import { current, processes } from '../process.js';
@@ -128,6 +129,8 @@ class FdInfoDir extends ProcDir {
  */
 function show_status(ctx: FSContext): string {
 	const { uid, gid, euid, egid, suid, sgid, groups } = ctx.credentials;
+	const caps = processes.get(ctx.id)?.caps ?? initial_capabilities();
+	const set = (value: bigint) => value.toString(16).padStart(16, '0');
 
 	return (
 		`Name:\t${processes.get(ctx.id)?.comm || 'context'}\n` +
@@ -141,6 +144,11 @@ function show_status(ctx: FSContext): string {
 		`Gid:\t${gid}\t${egid}\t${sgid}\t${egid}\n` +
 		`FDSize:\t${ctx.descriptors.size}\n` +
 		`Groups:\t${groups.map(id => id + ' ').join('')}\n` +
+		`CapInh:\t${set(caps.inheritable)}\n` +
+		`CapPrm:\t${set(caps.permitted)}\n` +
+		`CapEff:\t${set(caps.effective)}\n` +
+		`CapBnd:\t${set(caps.bounding)}\n` +
+		`CapAmb:\t${set(caps.ambient)}\n` +
 		`Threads:\t1\n`
 	);
 }
@@ -272,6 +280,7 @@ export const proc_root: ProcRoot = new ProcRoot({
 	version: file(() => `${init_uts.sysname} version ${init_uts.release} (${init_uts.version})\n`),
 	sys: new ProcDir({
 		kernel: new ProcDir({
+			cap_last_cap: file(() => cap_last + '\n'),
 			ostype: file(() => init_uts.sysname + '\n'),
 			osrelease: file(() => init_uts.release + '\n'),
 			version: file(() => init_uts.version + '\n'),

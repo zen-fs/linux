@@ -296,6 +296,101 @@ export function read_utsname(uts: UtsName): UtsNameFields {
 	};
 }
 
+/** `_LINUX_CAPABILITY_VERSION_3`, the 64-bit capability ABI */
+export const capabilityVersion = 0x20080522;
+
+/** `struct __user_cap_header_struct`, which says which ABI and whose capabilities are meant */
+export class CapHeader extends struct('__user_cap_header_struct', {
+	version: t.uint32,
+	pid: t.int32,
+}) {}
+
+/**
+ * `struct __user_cap_data_struct`. Capabilities outgrew 32 bits, so version 3 passes an array of two
+ * of these: the low half of each set, then the high half.
+ */
+export class CapData extends struct('__user_cap_data_struct', {
+	effective: t.uint32,
+	permitted: t.uint32,
+	inheritable: t.uint32,
+}) {}
+
+/** How many {@link CapData} one capability set takes */
+export const capDataCount = 2;
+
+export interface CapFields {
+	effective: bigint;
+	permitted: bigint;
+	inheritable: bigint;
+}
+
+const low = (value: bigint) => Number(value & 0xffffffffn);
+const high = (value: bigint) => Number((value >> 32n) & 0xffffffffn);
+
+export function write_capdata(into: Uint8Array, from: CapFields): void {
+	for (let i = 0; i < capDataCount; i++) {
+		const half = i ? high : low;
+		const data = new CapData(into.buffer, into.byteOffset + i * CapData.size);
+		data.effective = half(from.effective);
+		data.permitted = half(from.permitted);
+		data.inheritable = half(from.inheritable);
+	}
+}
+
+export function read_capdata(from: Uint8Array): CapFields {
+	const join = (key: 'effective' | 'permitted' | 'inheritable') => {
+		let value = 0n;
+		for (let i = 0; i < capDataCount; i++) value |= BigInt(new CapData(from.buffer, from.byteOffset + i * CapData.size)[key]) << BigInt(i * 32);
+		return value;
+	};
+
+	return { effective: join('effective'), permitted: join('permitted'), inheritable: join('inheritable') };
+}
+
+/** Where a file's capabilities live */
+export const capabilityXattr = 'security.capability';
+
+export const vfsCapRevision2 = 0x02000000;
+export const vfsCapRevisionMask = 0xff000000;
+/** Whether the program comes up with its permitted set already effective */
+export const vfsCapFlagsEffective = 0x000001;
+
+/** `struct vfs_cap_data`, the revision 2 form: a header and the two halves of each of two sets */
+export class VfsCapData extends struct('vfs_cap_data', {
+	magic_etc: t.uint32,
+	permitted_low: t.uint32,
+	inheritable_low: t.uint32,
+	permitted_high: t.uint32,
+	inheritable_high: t.uint32,
+}) {}
+
+/** What a file says its program may have */
+export interface FileCapabilities {
+	permitted: bigint;
+	inheritable: bigint;
+	effective: boolean;
+}
+
+export function write_file_capabilities(into: Uint8Array, from: FileCapabilities): number {
+	const data = new VfsCapData(into.buffer, into.byteOffset);
+	data.magic_etc = vfsCapRevision2 | (from.effective ? vfsCapFlagsEffective : 0);
+	data.permitted_low = low(from.permitted);
+	data.inheritable_low = low(from.inheritable);
+	data.permitted_high = high(from.permitted);
+	data.inheritable_high = high(from.inheritable);
+	return VfsCapData.size;
+}
+
+export function read_file_capabilities(from: Uint8Array): FileCapabilities {
+	const data = new VfsCapData(from.buffer, from.byteOffset);
+
+	return {
+		permitted: (BigInt(data.permitted_high) << 32n) | BigInt(data.permitted_low),
+		inheritable: (BigInt(data.inheritable_high) << 32n) | BigInt(data.inheritable_low),
+		effective: (data.magic_etc & vfsCapFlagsEffective) !== 0,
+	};
+}
+
 /**
  * The terminal ioctls, from `<asm-generic/ioctls.h>`.
  * These are the ones with an answer that doesn't fit in the return value.
@@ -478,6 +573,13 @@ export interface Syscalls {
 	futimes(fd: number, atime: number, mtime: number): number;
 	access(path: string, mode: number): number;
 
+	/** @returns the length of the value, which is in the region */
+	getxattr(path: string, name: string, noFollow: boolean): number;
+	setxattr(path: string, name: string, value: Uint8Array, noFollow: boolean): number;
+	removexattr(path: string, name: string, noFollow: boolean): number;
+	/** @returns the length of the NUL-separated names, which are in the region */
+	listxattr(path: string, noFollow: boolean): number;
+
 	// The process' view of the tree
 	chdir(path: string): number;
 	/** @returns the length of the working directory, which is in the region */
@@ -513,6 +615,10 @@ export interface Syscalls {
 	uname(): number;
 	sethostname(name: string): number;
 	setdomainname(name: string): number;
+
+	/** Leaves `capDataCount` `struct __user_cap_data_struct` in the region */
+	capget(pid: number): number;
+	capset(pid: number, effective: bigint, permitted: bigint, inheritable: bigint): number;
 }
 
 /** What the kernel sends a thread once, before anything else */

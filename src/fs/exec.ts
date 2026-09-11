@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-import { fs } from '@zenfs/core';
+/* eslint-disable @typescript-eslint/only-throw-error */
+import { fs, type FSContext } from '@zenfs/core';
 import { O_RDONLY, X_OK } from '@zenfs/core/constants';
+import * as xattr from '@zenfs/core/vfs/xattr';
+import type { FileCapabilities } from '@zenfs/linux/uapi/abi';
+import { capabilityXattr, read_file_capabilities, VfsCapData, vfsCapRevision2, vfsCapRevisionMask } from '@zenfs/linux/uapi/abi';
 import { UV } from 'kerium';
+import { decodeASCII } from 'utilium';
+import { capabilities_on_exec } from '../capability.js';
 import type { ProcessInit } from '../process.js';
 import { Process } from '../process.js';
 import { Thread } from '../thread.js';
-import { decodeASCII } from 'utilium';
 
 export const binPrmBufSize = 256;
 
@@ -125,9 +130,24 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 	proc.env = prm.env;
 	proc.code = undefined;
 
-	// The thread runs the interpreter, so that is what the kernel loads. A program with none is its own.
+	let caps: FileCapabilities | undefined;
+
+	try {
+		const value = xattr.getSync.call(proc.context, prm.filename, capabilityXattr, {}) as unknown as Uint8Array;
+		if (value.byteLength < VfsCapData.size) throw null;
+		// Revision 1 is 32 bits wide and long gone, so anything older than revision 2 is not read
+		if ((new VfsCapData(value.buffer, value.byteOffset).magic_etc & vfsCapRevisionMask) < vfsCapRevision2) throw null;
+		caps = read_file_capabilities(value);
+	} catch {
+		// this is fine
+	}
+
+	proc.caps = capabilities_on_exec(proc.caps, proc.context.credentials.euid, caps);
+
 	const interpreter = fmt.interpreter ? fs.realpathSync.call($, fmt.interpreter) : prm.filename;
-	const source = read_program(proc, interpreter);
+	fs.accessSync.call(proc.context, interpreter, X_OK);
+	const data = fs.readFileSync.call<FSContext, [string], Uint8Array>(proc.context, interpreter);
+	const source = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 
 	proc.thread?.kill();
 
@@ -135,13 +155,6 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 	if (proc.tty) proc.tty.foreground = proc;
 
 	await proc.thread.start(prm.filename, interpreter, source);
-}
-
-/** Everything in an executable, which for an interpreter is what the thread is started on */
-function read_program(proc: Process, path: string): Uint8Array {
-	fs.accessSync.call(proc.context, path, X_OK);
-	const data = fs.readFileSync.call(proc.context, path) as unknown as Uint8Array;
-	return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 }
 
 /**

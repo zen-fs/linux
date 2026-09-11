@@ -13,7 +13,21 @@ import type { Handle } from '@zenfs/core/vfs/file';
 import { dupFD, fromFD, toFD } from '@zenfs/core/vfs/file';
 import { ioctlSync } from '@zenfs/core/vfs/ioctl';
 import * as vfs from '@zenfs/core/vfs/sync';
-import { Ioctl, Stat, StatFs, TermiosAbi, Whence, Winsize, write_dirents, write_stat, write_statfs, write_termios } from '@zenfs/linux/uapi/abi';
+import * as xattr from '@zenfs/core/vfs/xattr';
+import {
+	capabilityXattr,
+	Ioctl,
+	Stat,
+	StatFs,
+	TermiosAbi,
+	Whence,
+	Winsize,
+	write_dirents,
+	write_stat,
+	write_statfs,
+	write_termios,
+} from '@zenfs/linux/uapi/abi';
+import { Cap, require_capable } from '../capability.js';
 import type { Termios, WinSize } from '../drivers/tty/index.js';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
@@ -265,6 +279,26 @@ define_syscall('fchown', (proc, fd, uid, gid) => fromFD(proc.context, fd).chownS
 define_syscall('utimes', (proc, path, atime, mtime) => fs.utimesSync.call(proc.context, path, atime, mtime));
 define_syscall('futimes', (proc, fd, atime, mtime) => fromFD(proc.context, fd).utimesSync(atime, mtime));
 define_syscall('access', (proc, path, mode) => fs.accessSync.call(proc.context, path, mode));
+
+define_syscall('getxattr', (proc, path, name, noFollow) =>
+	thread_of(proc).put(xattr.getSync.call(proc.context, path, name as xattr.Name, { noFollow }) as unknown as Uint8Array)
+);
+
+function may_write_xattr(proc: Process, name: string): void {
+	if (name == capabilityXattr) require_capable(proc, Cap.SETFCAP);
+}
+
+define_syscall('setxattr', (proc, path, name, value, noFollow) => {
+	may_write_xattr(proc, name);
+	xattr.setSync.call(proc.context, path, name as xattr.Name, value, { noFollow });
+});
+
+define_syscall('removexattr', (proc, path, name) => {
+	may_write_xattr(proc, name);
+	xattr.removeSync.call(proc.context, path, name as xattr.Name);
+});
+
+define_syscall('listxattr', (proc, path) => thread_of(proc).put(encodeUTF8(xattr.listSync.call(proc.context, path).join('\0'))));
 
 define_syscall('chdir', (proc, path) => proc.chdir(path));
 define_syscall('getcwd', proc => thread_of(proc).put(encodeUTF8(proc.cwd)));

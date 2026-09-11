@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The process and signal syscalls */
-import { UtsName, write_utsname } from '@zenfs/linux/uapi/abi';
+import { CapData, capDataCount, UtsName, write_capdata, write_utsname } from '@zenfs/linux/uapi/abi';
 import { withErrno } from 'kerium';
+import { Cap, cap_set, require_capable } from '../capability.js';
 import { execve, spawn } from '../fs/exec.js';
 import type { Process } from '../process.js';
 import { processes } from '../process.js';
@@ -73,18 +74,37 @@ define_syscall('uname', proc => {
 	return thread_of(proc).filled(UtsName.size);
 });
 
-/** What naming the system takes, standing in for `CAP_SYS_ADMIN` until there are capabilities */
-// @todo add capabilities
-function admin(proc: Process): void {
-	if (proc.context.credentials.euid !== 0) throw withErrno('EPERM');
-}
-
 define_syscall('sethostname', (proc, name) => {
-	admin(proc);
+	require_capable(proc, Cap.SYS_ADMIN);
 	set_hostname(name);
 });
 
 define_syscall('setdomainname', (proc, name) => {
-	admin(proc);
+	require_capable(proc, Cap.SYS_ADMIN);
 	set_domainname(name);
+});
+
+/** Whose capabilities a `capget` or `capset` means. Linux takes 0 for the caller. */
+function target_of(proc: Process, pid: number): Process {
+	if (!pid || pid === proc.pid) return proc;
+
+	const target = processes.get(pid);
+	if (!target) throw withErrno('ESRCH');
+	return target;
+}
+
+define_syscall('capget', (proc, pid) => {
+	const { region } = thread_of(proc);
+	const size = CapData.size * capDataCount;
+	region.fill(0, 0, size);
+
+	write_capdata(region, target_of(proc, pid).caps);
+
+	return thread_of(proc).filled(size);
+});
+
+define_syscall('capset', (proc, pid, effective, permitted, inheritable) => {
+	if (pid && pid !== proc.pid) throw withErrno('EPERM', 'capabilities may only be set on the calling process');
+
+	proc.caps = cap_set(proc.caps, { effective: BigInt(effective), permitted: BigInt(permitted), inheritable: BigInt(inheritable) });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The process and signal syscalls */
-import type { UtsNameFields } from './abi.js';
-import { read_utsname, UtsName } from './abi.js';
+import type { CapFields, UtsNameFields } from './abi.js';
+import { read_capdata, read_utsname, UtsName } from './abi.js';
 import { init, returned, syscall } from './base.js';
 
 export { off_signal, on_signal, ready, type SignalHandler } from './base.js';
@@ -85,4 +85,13 @@ export function sethostname(name: string): void {
 
 export function setdomainname(name: string): void {
 	syscall('setdomainname', name);
+}
+
+export function capget(pid: number = 0): CapFields {
+	syscall('capget', pid);
+	return read_capdata(returned());
+}
+
+export function capset(sets: CapFields, pid: number = 0): void {
+	syscall('capset', pid, sets.effective, sets.permitted, sets.inheritable);
 }

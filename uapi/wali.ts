@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { Errno } from 'kerium';
 import { decodeUTF8, encodeUTF8 } from 'utilium';
-import { Ioctl, read_termios, TermiosAbi, Winsize } from './abi.js';
+import { capabilityVersion, CapData, capDataCount, CapHeader, Ioctl, read_capdata, read_termios, TermiosAbi, Winsize } from './abi.js';
 import type { Syscalls } from './abi.js';
 import { pending, returned, syscall_raw } from './base.js';
 import { environ, argv as get_argv, getpid } from './process.js';
@@ -306,6 +306,17 @@ export const wali = {
 		return BigInt(give(ptr, size));
 	},
 
+	SYS_getxattr: (path: number, name: number, ptr: number, size: number) => sized('getxattr', ptr, size, getString(path), getString(name), false),
+	SYS_lgetxattr: (path: number, name: number, ptr: number, size: number) => sized('getxattr', ptr, size, getString(path), getString(name), true),
+	SYS_setxattr: (path: number, name: number, ptr: number, size: number) =>
+		sys('setxattr', getString(path), getString(name), read_at(ptr, size), false),
+	SYS_lsetxattr: (path: number, name: number, ptr: number, size: number) =>
+		sys('setxattr', getString(path), getString(name), read_at(ptr, size), true),
+	SYS_removexattr: (path: number, name: number) => sys('removexattr', getString(path), getString(name), false),
+	SYS_lremovexattr: (path: number, name: number) => sys('removexattr', getString(path), getString(name), true),
+	SYS_listxattr: (path: number, ptr: number, size: number) => sized('listxattr', ptr, size, getString(path), false),
+	SYS_llistxattr: (path: number, ptr: number, size: number) => sized('listxattr', ptr, size, getString(path), true),
+
 	SYS_getdents64: (fd: number, ptr: number, size: number) => {
 		const value = syscall_raw('getdents', fd);
 		if (value < 0) return BigInt(value);
@@ -413,6 +424,19 @@ export const wali = {
 	SYS_sethostname: (ptr: number, length: number) => sys('sethostname', decodeUTF8(read_at(ptr, length))),
 	SYS_setdomainname: (ptr: number, length: number) => sys('setdomainname', decodeUTF8(read_at(ptr, length))),
 
+	SYS_capget: (header: number, data: number) => {
+		const head = struct_at(CapHeader, header);
+		if (head.version != capabilityVersion) return -BigInt(Errno.EINVAL);
+		return data ? filled_at('capget', data, head.pid) : sys('capget', head.pid);
+	},
+	SYS_capset: (header: number, data: number) => {
+		const head = struct_at(CapHeader, header);
+		if (head.version != capabilityVersion) return -BigInt(Errno.EINVAL);
+
+		const { effective, permitted, inheritable } = read_capdata(read_at(data, CapData.size * capDataCount));
+		return sys('capset', head.pid, effective, permitted, inheritable);
+	},
+
 	SYS_clock_gettime: (_clock: number, ptr: number) => timespec(ptr, Date.now()),
 	SYS_gettimeofday: (ptr: number) => {
 		if (!ptr) return 0n;
@@ -519,6 +543,17 @@ function timespec(ptr: number, ms: number): bigint {
 	view.setBigInt64(ptr, BigInt(Math.floor(ms / 1000)), true);
 	view.setBigInt64(ptr + 8, BigInt(Math.round((ms % 1000) * 1e6)), true);
 	return 0n;
+}
+
+/**
+ * A syscall whose answer is a run of bytes, copied out to a pointer that says how much room it has.
+ * A size of 0 asks only how big the answer would be, which is what `getxattr` is called for first.
+ */
+function sized<K extends keyof Syscalls>(name: K, ptr: number, size: number, ...args: Parameters<Syscalls[K]>): bigint {
+	const value = syscall_raw(name, ...args);
+	if (value < 0 || !size) return BigInt(value);
+	if (value > size) return -BigInt(Errno.ERANGE);
+	return BigInt(give(ptr, size));
 }
 
 /** A syscall whose answer is a structure left in the region, which is copied to a pointer as it is */

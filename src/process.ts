@@ -4,6 +4,8 @@ import { bindContext, boundContexts, defaultContext, fs } from '@zenfs/core';
 import { O_RDWR } from '@zenfs/core/constants';
 import { dupFD } from '@zenfs/core/vfs/file.js';
 import { UV, withErrno } from 'kerium';
+import type { Capabilities } from './capability.js';
+import { copy_capabilities, initial_capabilities } from './capability.js';
 import { console_tty } from './drivers/tty/console.js';
 import type { TTY } from './drivers/tty/tty.js';
 import type { SignalHandler, SignalLike } from './signal.js';
@@ -89,6 +91,9 @@ export class Process {
 	/** The path of the program currently loaded */
 	public exe?: string;
 
+	/** What the process is allowed to do beyond what its uid allows, inherited across a fork */
+	public caps: Capabilities;
+
 	/** What the process stopped with, once it has. */
 	public code?: number;
 
@@ -126,6 +131,7 @@ export class Process {
 
 		this.argv = init.argv ?? [];
 		this.env = init.env ?? {};
+		this.caps = init.parent ? copy_capabilities(init.parent.caps) : initial_capabilities();
 
 		this.tty = init.tty !== undefined ? init.tty : (init.parent?.tty ?? console_tty);
 
