@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { Syscalls } from '@zenfs/linux/uapi/abi';
-import { Errno, Exception, withErrno } from 'kerium';
+import { Errno, withErrno } from 'kerium';
 import { err } from 'kerium/log';
 import type { Process } from '../process.js';
 import { set_current } from '../process.js';
@@ -47,7 +47,8 @@ export async function dispatch(proc: Process, name: keyof Syscalls, args: unknow
 		const value = await call(proc, ...args);
 		return typeof value == 'number' ? value : Number(value ?? 0);
 	} catch (e) {
-		if (e instanceof Exception) return -e.errno;
+		const errno = (e as { errno?: unknown }).errno;
+		if (typeof errno == 'number') return -errno;
 
 		// Nothing else should come out of a handler, so it is a kernel bug rather than a failed call
 		err(`syscall ${name}: ${String(e)}`);
