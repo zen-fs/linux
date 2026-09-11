@@ -41,6 +41,7 @@ export { CharDevice } from './fs/char_dev.js';
 export * from './fs/configfs.js';
 export * from './fs/debugfs.js';
 export * from './fs/devtmpfs.js';
+export * from './fs/ioctl.js';
 export * from './fs/procfs.js';
 export * from './fs/sysfs.js';
 

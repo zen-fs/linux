@@ -1,10 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-/**
- * The file system syscalls.
- *
- * These sit on the VFS rather than on the Node emulation: a descriptor is a kernel `Handle` and what
- * comes back is an inode, not a `Stats`. Turning any of it into `node:fs` is userspace's job.
- */
 import type { FSContext, InodeLike } from '@zenfs/core';
 import { fs } from '@zenfs/core';
 import { O_DIRECTORY, O_NONBLOCK } from '@zenfs/core/constants';
@@ -14,8 +8,11 @@ import { dupFD, fromFD, toFD } from '@zenfs/core/vfs/file';
 import { ioctlSync } from '@zenfs/core/vfs/ioctl';
 import * as vfs from '@zenfs/core/vfs/sync';
 import * as xattr from '@zenfs/core/vfs/xattr';
+import type { FsxattrFields } from '@zenfs/linux/uapi/abi';
 import {
 	capabilityXattr,
+	FsSysfsPath,
+	Fsxattr,
 	Ioctl,
 	Stat,
 	StatFs,
@@ -23,6 +20,8 @@ import {
 	Whence,
 	Winsize,
 	write_dirents,
+	write_fs_sysfs_path,
+	write_fsxattr,
 	write_stat,
 	write_statfs,
 	write_termios,
@@ -176,6 +175,16 @@ const ioctl_answers: Record<number, (into: Uint8Array, value: never) => number> 
 		into.fill(0, 0, TermiosAbi.size);
 		write_termios(new TermiosAbi(into.buffer, into.byteOffset), value);
 		return TermiosAbi.size;
+	},
+	[Ioctl.FSGETXATTR]: (into, value: FsxattrFields) => {
+		into.fill(0, 0, Fsxattr.size);
+		write_fsxattr(new Fsxattr(into.buffer, into.byteOffset), value);
+		return Fsxattr.size;
+	},
+	[Ioctl.GETFSSYSFSPATH]: (into, value: string) => {
+		into.fill(0, 0, FsSysfsPath.size);
+		write_fs_sysfs_path(new FsSysfsPath(into.buffer, into.byteOffset), value);
+		return FsSysfsPath.size;
 	},
 };
 

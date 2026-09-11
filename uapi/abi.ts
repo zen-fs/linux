@@ -407,6 +407,79 @@ export const enum Ioctl {
 	TIOCGWINSZ = 0x5413,
 	TIOCSWINSZ = 0x5414,
 	FIONREAD = 0x541b,
+	FSGETXATTR = 0x801c581f,
+	FSSETXATTR = 0x401c5820,
+	GETFSSYSFSPATH = 0x80811501,
+}
+
+/** `FS_XFLAG_*`, the flags {@link Ioctl.FSGETXATTR} reports */
+export const enum XFlag {
+	RealTime = 0x00000001,
+	PreAlloc = 0x00000002,
+	Immutable = 0x00000008,
+	Append = 0x00000010,
+	Sync = 0x00000020,
+	NoAtime = 0x00000040,
+	NoDump = 0x00000080,
+	RtInherit = 0x00000100,
+	ProjInherit = 0x00000200,
+	NoSymlinks = 0x00000400,
+	ExtSize = 0x00000800,
+	ExtSzInherit = 0x00001000,
+	NoDefrag = 0x00002000,
+	FileStream = 0x00004000,
+	Dax = 0x00008000,
+	CowExtSize = 0x00010000,
+	Verity = 0x00020000,
+	CaseFold = 0x00040000,
+	HasAttr = 0x80000000,
+}
+
+/** `struct fsxattr` */
+export class Fsxattr extends struct('fsxattr', {
+	xflags: t.uint32,
+	extsize: t.uint32,
+	nextents: t.uint32,
+	projid: t.uint32,
+	cowextsize: t.uint32,
+	pad: t.uint8(8),
+}) {}
+
+export interface FsxattrFields {
+	xflags: number;
+	extsize: number;
+	nextents: number;
+	projid: number;
+	cowextsize: number;
+}
+
+export function write_fsxattr(attr: Fsxattr, from: FsxattrFields): void {
+	attr.xflags = from.xflags;
+	attr.extsize = from.extsize;
+	attr.nextents = from.nextents;
+	attr.projid = from.projid;
+	attr.cowextsize = from.cowextsize;
+}
+
+export function read_fsxattr(attr: Fsxattr): FsxattrFields {
+	return { xflags: attr.xflags, extsize: attr.extsize, nextents: attr.nextents, projid: attr.projid, cowextsize: attr.cowextsize };
+}
+
+/** `struct fs_sysfs_path`: a length and the path under `/sys/fs` that goes with it */
+export class FsSysfsPath extends struct('fs_sysfs_path', {
+	len: t.uint8,
+	name: t.uint8(128),
+}) {}
+
+export function write_fs_sysfs_path(into: FsSysfsPath, path: string): void {
+	const encoded = encodeUTF8(path).subarray(0, into.name.byteLength - 1);
+	into.name.fill(0);
+	into.name.set(encoded);
+	into.len = encoded.byteLength;
+}
+
+export function read_fs_sysfs_path(from: FsSysfsPath): string {
+	return decodeUTF8(from.name.subarray(0, from.len));
 }
 
 /** `struct winsize`, what `TIOCGWINSZ` fills in */
