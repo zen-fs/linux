@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // The flags and characters are uapi, so they live in the ABI and are re-exported here.
 // @see `<linux>/include/uapi/asm-generic/termbits.h`
-import type { TermiosFields } from '@zenfs/linux/uapi/abi';
+import type { Termios } from '@zenfs/linux/uapi/abi';
 import { iflags, lflags, oflags } from '@zenfs/linux/uapi/abi';
-
-/** The line settings of a terminal, i.e. `struct ktermios` */
-export type Termios = TermiosFields;
 
 /**
  * What a terminal starts out as, i.e. `tty_std_termios`.

@@ -3,8 +3,60 @@
  * The syscall ABI. This is the one file both the kernel and userspace import, so it must not pull in
  * either side: no `@zenfs/core`, no worker globals.
  */
-import { struct, types as t } from 'memium';
+import type { Type } from 'memium';
+import { array, FieldBuilder, packed, primitive, registerType, struct, types as t } from 'memium';
 import { decodeUTF8, encodeUTF8 } from 'utilium';
+
+/**
+ * A 64-bit field carried as a `number`.
+ *
+ * The ABI is 64 bits wide but nothing on either side of it is:
+ * the VFS counts in `number`s and so does userspace, and none of these fields comes near 2^53.
+ * Doing the conversion in the type means neither side does it at every use.
+ */
+function number64(name: string, of: Type<bigint>): FieldBuilder<Type<number>, { align: 8 }> {
+	const type = {
+		name,
+		size: 8,
+		get: (buffer, offset) => Number(of.get(buffer, offset)),
+		set: (buffer, offset, value) => of.set(buffer, offset, BigInt(Math.round(value))),
+	} satisfies Type<number>;
+
+	registerType(type);
+	return new FieldBuilder(type, { align: 8 });
+}
+
+export const long = number64('long', primitive.types.int64);
+export const ulong = number64('unsigned long', primitive.types.uint64);
+
+const cstrings = new Map<number, Type<string>>();
+
+/** A fixed-size, NUL-terminated `char[]`, as the string in it */
+function cstring(size: number): FieldBuilder<Type<string>, { align: 1 }> {
+	let type = cstrings.get(size);
+
+	if (!type) {
+		type = {
+			name: `char[${size}]`,
+			size,
+			get(buffer, offset) {
+				const bytes = new Uint8Array(buffer, offset, size);
+				const end = bytes.indexOf(0);
+				return decodeUTF8(end < 0 ? bytes : bytes.subarray(0, end));
+			},
+			set(buffer, offset, value) {
+				const bytes = new Uint8Array(buffer, offset, size);
+				bytes.fill(0);
+				bytes.set(encodeUTF8(value).subarray(0, size - 1));
+			},
+		} satisfies Type<string>;
+
+		registerType(type);
+		cstrings.set(size, type);
+	}
+
+	return new FieldBuilder(type, { align: 1 });
+}
 
 /**
  * The states of the word a blocked thread waits on.
@@ -46,32 +98,68 @@ export const defaultRegionSize = 1024 * 1024;
  * The fields and their order are x86-64's, so a WALI adapter can write the same thing at a pointer.
  */
 export class Stat extends struct('stat', {
-	dev: t.uint64,
-	ino: t.uint64,
-	nlink: t.uint64,
+	dev: ulong,
+	ino: ulong,
+	nlink: ulong,
 	mode: t.uint32,
 	uid: t.uint32,
 	gid: t.uint32,
 	__pad0: t.uint32,
-	rdev: t.uint64,
-	size: t.int64,
-	blksize: t.int64,
-	blocks: t.int64,
-	atime: t.int64,
-	atime_nsec: t.int64,
-	mtime: t.int64,
-	mtime_nsec: t.int64,
-	ctime: t.int64,
-	ctime_nsec: t.int64,
+	rdev: ulong,
+	size: long,
+	blksize: long,
+	blocks: long,
+	atime: long,
+	atime_nsec: long,
+	mtime: long,
+	mtime_nsec: long,
+	ctime: long,
+	ctime_nsec: long,
 	/** Linux leaves these three reserved and keeps the birth time in `statx` instead; the VFS has one, so it goes here. */
-	btime: t.int64,
-	btime_nsec: t.int64,
+	btime: long,
+	btime_nsec: long,
 	__unused: t.int64(1),
-}) {}
+}) {
+	get atimeMs(): number {
+		return this.atime * 1000 + this.atime_nsec / 1e6;
+	}
+
+	set atimeMs(ms: number) {
+		this.atime = Math.floor(ms / 1000);
+		this.atime_nsec = (ms - this.atime * 1000) * 1e6;
+	}
+
+	get mtimeMs(): number {
+		return this.mtime * 1000 + this.mtime_nsec / 1e6;
+	}
+
+	set mtimeMs(ms: number) {
+		this.mtime = Math.floor(ms / 1000);
+		this.mtime_nsec = (ms - this.mtime * 1000) * 1e6;
+	}
+
+	get ctimeMs(): number {
+		return this.ctime * 1000 + this.ctime_nsec / 1e6;
+	}
+
+	set ctimeMs(ms: number) {
+		this.ctime = Math.floor(ms / 1000);
+		this.ctime_nsec = (ms - this.ctime * 1000) * 1e6;
+	}
+
+	get birthtimeMs(): number {
+		return this.btime * 1000 + this.btime_nsec / 1e6;
+	}
+
+	set birthtimeMs(ms: number) {
+		this.btime = Math.floor(ms / 1000);
+		this.btime_nsec = (ms - this.btime * 1000) * 1e6;
+	}
+}
 
 /** What a `struct stat` says, in the units the VFS keeps them in */
 export interface StatFields {
-	dev: number;
+	dev: bigint;
 	ino: number;
 	nlink: number;
 	mode: number;
@@ -87,63 +175,23 @@ export interface StatFields {
 	birthtimeMs: number;
 }
 
-/** Milliseconds split the way `struct timespec` keeps them */
-function split(ms: number): [seconds: bigint, nanoseconds: bigint] {
-	const seconds = Math.floor(ms / 1000);
-	return [BigInt(seconds), BigInt(Math.round((ms - seconds * 1000) * 1e6))];
-}
-
-export function write_stat(stat: Stat, from: StatFields): void {
-	stat.dev = BigInt(from.dev);
-	stat.ino = BigInt(from.ino);
-	stat.nlink = BigInt(from.nlink);
-	stat.mode = from.mode;
-	stat.uid = from.uid;
-	stat.gid = from.gid;
-	stat.rdev = BigInt(from.rdev);
-	stat.size = BigInt(from.size);
-	stat.blksize = BigInt(from.blksize);
-	stat.blocks = BigInt(from.blocks);
-	[stat.atime, stat.atime_nsec] = split(from.atimeMs);
-	[stat.mtime, stat.mtime_nsec] = split(from.mtimeMs);
-	[stat.ctime, stat.ctime_nsec] = split(from.ctimeMs);
-	[stat.btime, stat.btime_nsec] = split(from.birthtimeMs);
-}
-
-export function read_stat(stat: Stat): StatFields {
-	const ms = (seconds: bigint, nanoseconds: bigint) => Number(seconds) * 1000 + Number(nanoseconds) / 1e6;
-
-	return {
-		dev: Number(stat.dev),
-		ino: Number(stat.ino),
-		nlink: Number(stat.nlink),
-		mode: stat.mode,
-		uid: stat.uid,
-		gid: stat.gid,
-		rdev: Number(stat.rdev),
-		size: Number(stat.size),
-		blksize: Number(stat.blksize),
-		blocks: Number(stat.blocks),
-		atimeMs: ms(stat.atime, stat.atime_nsec),
-		mtimeMs: ms(stat.mtime, stat.mtime_nsec),
-		ctimeMs: ms(stat.ctime, stat.ctime_nsec),
-		birthtimeMs: ms(stat.btime, stat.btime_nsec),
-	};
-}
-
 /**
  * The fixed part of `struct linux_dirent64`. The name follows, NUL terminated, and `reclen` covers
  * both, so entries can be walked without knowing how long the names are.
  */
-export class Dirent64 extends struct('linux_dirent64', {
-	ino: t.uint64,
-	off: t.int64,
-	reclen: t.uint16,
-	type: t.uint8,
-}) {}
+export class Dirent64 extends struct(
+	'linux_dirent64',
+	{
+		ino: ulong,
+		off: long,
+		reclen: t.uint16,
+		type: t.uint8,
+	},
+	packed
+) {}
 
-/** Where the name starts in a {@link Dirent64} record. Linux packs the struct, so it is not `Dirent64.size`. */
-export const direntNameOffset = 19;
+/** Where the name starts in a {@link Dirent64} record, which is right after the fixed part */
+const direntNameOffset = Dirent64.size;
 
 export interface DirentFields {
 	ino: number;
@@ -166,11 +214,7 @@ export function write_dirents(into: Uint8Array, entries: readonly DirentFields[]
 		const reclen = Math.ceil((direntNameOffset + name.byteLength + 1) / 8) * 8;
 		if (offset + reclen > into.byteLength) break;
 
-		const dirent = new Dirent64(into.buffer, into.byteOffset + offset);
-		dirent.ino = BigInt(entry.ino);
-		dirent.off = BigInt(offset + reclen);
-		dirent.reclen = reclen;
-		dirent.type = entry.type;
+		Object.assign(new Dirent64(into.buffer, into.byteOffset + offset), { ino: entry.ino, off: offset + reclen, reclen, type: entry.type });
 
 		into.set(name, offset + direntNameOffset);
 		into.fill(0, offset + direntNameOffset + name.byteLength, offset + reclen);
@@ -193,7 +237,7 @@ export function read_dirents(from: Uint8Array): DirentFields[] {
 		let end = start;
 		while (end < offset + reclen && from[end]) end++;
 
-		entries.push({ ino: Number(dirent.ino), type: dirent.type, name: decodeUTF8(from.subarray(start, end)) });
+		entries.push({ ino: dirent.ino, type: dirent.type, name: decodeUTF8(from.subarray(start, end)) });
 		offset += reclen;
 	}
 
@@ -201,18 +245,18 @@ export function read_dirents(from: Uint8Array): DirentFields[] {
 }
 
 export class StatFs extends struct('statfs', {
-	type: t.int64,
-	bsize: t.int64,
-	blocks: t.uint64,
-	bfree: t.uint64,
-	bavail: t.uint64,
-	files: t.uint64,
-	ffree: t.uint64,
-	fsid: t.int32(2),
-	namelen: t.int64,
-	frsize: t.int64,
-	flags: t.int64,
-	spare: t.int64(4),
+	type: long,
+	bsize: long,
+	blocks: ulong,
+	bfree: ulong,
+	bavail: ulong,
+	files: ulong,
+	ffree: ulong,
+	fsid: t.int32(2).align(4),
+	namelen: long,
+	frsize: long,
+	flags: long,
+	spare: long(4),
 }) {}
 
 export interface StatFsFields {
@@ -227,40 +271,14 @@ export interface StatFsFields {
 	namelen: number;
 }
 
-export function write_statfs(statfs: StatFs, from: StatFsFields): void {
-	statfs.type = BigInt(Math.round(from.type));
-	statfs.bsize = BigInt(Math.round(from.bsize));
-	statfs.blocks = BigInt(Math.round(from.blocks));
-	statfs.bfree = BigInt(Math.round(from.bfree));
-	statfs.bavail = BigInt(Math.round(from.bavail));
-	statfs.files = BigInt(Math.round(from.files));
-	statfs.ffree = BigInt(Math.round(from.ffree));
-	statfs.frsize = BigInt(Math.round(from.frsize));
-	statfs.namelen = BigInt(Math.round(from.namelen));
-}
-
-export function read_statfs(statfs: StatFs): StatFsFields {
-	return {
-		type: Number(statfs.type),
-		bsize: Number(statfs.bsize),
-		blocks: Number(statfs.blocks),
-		bfree: Number(statfs.bfree),
-		bavail: Number(statfs.bavail),
-		files: Number(statfs.files),
-		ffree: Number(statfs.ffree),
-		frsize: Number(statfs.frsize),
-		namelen: Number(statfs.namelen),
-	};
-}
-
 /** `struct utsname`, with the same field size Linux uses */
 export class UtsName extends struct('utsname', {
-	sysname: t.char(65),
-	nodename: t.char(65),
-	release: t.char(65),
-	version: t.char(65),
-	machine: t.char(65),
-	domainname: t.char(65),
+	sysname: cstring(65),
+	nodename: cstring(65),
+	release: cstring(65),
+	version: cstring(65),
+	machine: cstring(65),
+	domainname: cstring(65),
 }) {}
 
 export interface UtsNameFields {
@@ -272,30 +290,6 @@ export interface UtsNameFields {
 	domainname: string;
 }
 
-export function write_utsname(uts: UtsName, from: UtsNameFields): void {
-	for (const [key, value] of Object.entries(from) as [keyof UtsNameFields, string][]) {
-		const field = uts[key];
-		field.fill(0);
-		field.set(encodeUTF8(value).subarray(0, field.byteLength - 1));
-	}
-}
-
-export function read_utsname(uts: UtsName): UtsNameFields {
-	const name = (field: Uint8Array) => {
-		const end = field.indexOf(0);
-		return decodeUTF8(end < 0 ? field : field.subarray(0, end));
-	};
-
-	return {
-		sysname: name(uts.sysname),
-		nodename: name(uts.nodename),
-		release: name(uts.release),
-		version: name(uts.version),
-		machine: name(uts.machine),
-		domainname: name(uts.domainname),
-	};
-}
-
 /** `_LINUX_CAPABILITY_VERSION_3`, the 64-bit capability ABI */
 export const capabilityVersion = 0x20080522;
 
@@ -305,18 +299,54 @@ export class CapHeader extends struct('__user_cap_header_struct', {
 	pid: t.int32,
 }) {}
 
-/**
- * `struct __user_cap_data_struct`. Capabilities outgrew 32 bits, so version 3 passes an array of two
- * of these: the low half of each set, then the high half.
- */
-export class CapData extends struct('__user_cap_data_struct', {
+/** `struct __user_cap_data_struct`, one 32-bit half of each set */
+const cap_data = struct('__user_cap_data_struct', {
 	effective: t.uint32,
 	permitted: t.uint32,
 	inheritable: t.uint32,
-}) {}
+});
 
-/** How many {@link CapData} one capability set takes */
-export const capDataCount = 2;
+type CapSet = 'effective' | 'permitted' | 'inheritable';
+
+type CapHalves = ArrayLike<Record<CapSet, number>>;
+
+const join = (halves: CapHalves, set: CapSet) => (BigInt(halves[1][set]) << 32n) | BigInt(halves[0][set]);
+
+function split(halves: CapHalves, set: CapSet, value: bigint): void {
+	halves[0][set] = Number(value & 0xffffffffn);
+	halves[1][set] = Number((value >> 32n) & 0xffffffffn);
+}
+
+/**
+ * What a `cap_user_data_t` points at, i.e. what `capget` and `capset` carry.
+ * Capabilities outgrew 32 bits, so version 3 passes two `__user_cap_data_struct`: the low half of
+ * each set, then the high half.
+ */
+export class CapData extends struct('__user_cap_data_struct[2]', { halves: array(cap_data, 2) }) {
+	get effective(): bigint {
+		return join(this.halves, 'effective');
+	}
+
+	set effective(value: bigint) {
+		split(this.halves, 'effective', value);
+	}
+
+	get permitted(): bigint {
+		return join(this.halves, 'permitted');
+	}
+
+	set permitted(value: bigint) {
+		split(this.halves, 'permitted', value);
+	}
+
+	get inheritable(): bigint {
+		return join(this.halves, 'inheritable');
+	}
+
+	set inheritable(value: bigint) {
+		split(this.halves, 'inheritable', value);
+	}
+}
 
 export interface CapFields {
 	effective: bigint;
@@ -324,72 +354,45 @@ export interface CapFields {
 	inheritable: bigint;
 }
 
-const low = (value: bigint) => Number(value & 0xffffffffn);
-const high = (value: bigint) => Number((value >> 32n) & 0xffffffffn);
-
-export function write_capdata(into: Uint8Array, from: CapFields): void {
-	for (let i = 0; i < capDataCount; i++) {
-		const half = i ? high : low;
-		const data = new CapData(into.buffer, into.byteOffset + i * CapData.size);
-		data.effective = half(from.effective);
-		data.permitted = half(from.permitted);
-		data.inheritable = half(from.inheritable);
-	}
-}
-
-export function read_capdata(from: Uint8Array): CapFields {
-	const join = (key: 'effective' | 'permitted' | 'inheritable') => {
-		let value = 0n;
-		for (let i = 0; i < capDataCount; i++) value |= BigInt(new CapData(from.buffer, from.byteOffset + i * CapData.size)[key]) << BigInt(i * 32);
-		return value;
-	};
-
-	return { effective: join('effective'), permitted: join('permitted'), inheritable: join('inheritable') };
-}
-
 /** Where a file's capabilities live */
 export const capabilityXattr = 'security.capability';
 
 export const vfsCapRevision2 = 0x02000000;
-export const vfsCapRevisionMask = 0xff000000;
+const vfsCapRevisionMask = 0xff000000;
 /** Whether the program comes up with its permitted set already effective */
-export const vfsCapFlagsEffective = 0x000001;
+const vfsCapFlagsEffective = 0x000001;
 
-/** `struct vfs_cap_data`, the revision 2 form: a header and the two halves of each of two sets */
+/**
+ * `struct vfs_cap_data`, the revision 2 form: a header and the two halves of each of two sets.
+ * Nothing here writes one — `setcap` does, from userspace — so this only reads.
+ */
 export class VfsCapData extends struct('vfs_cap_data', {
 	magic_etc: t.uint32,
 	permitted_low: t.uint32,
 	inheritable_low: t.uint32,
 	permitted_high: t.uint32,
 	inheritable_high: t.uint32,
-}) {}
+}) {
+	/** Which `VFS_CAP_REVISION_*` this is */
+	get revision(): number {
+		return this.magic_etc & vfsCapRevisionMask;
+	}
+
+	get permitted(): bigint {
+		return (BigInt(this.permitted_high) << 32n) | BigInt(this.permitted_low);
+	}
+
+	get inheritable(): bigint {
+		return (BigInt(this.inheritable_high) << 32n) | BigInt(this.inheritable_low);
+	}
+
+	get effective(): boolean {
+		return (this.magic_etc & vfsCapFlagsEffective) !== 0;
+	}
+}
 
 /** What a file says its program may have */
-export interface FileCapabilities {
-	permitted: bigint;
-	inheritable: bigint;
-	effective: boolean;
-}
-
-export function write_file_capabilities(into: Uint8Array, from: FileCapabilities): number {
-	const data = new VfsCapData(into.buffer, into.byteOffset);
-	data.magic_etc = vfsCapRevision2 | (from.effective ? vfsCapFlagsEffective : 0);
-	data.permitted_low = low(from.permitted);
-	data.inheritable_low = low(from.inheritable);
-	data.permitted_high = high(from.permitted);
-	data.inheritable_high = high(from.inheritable);
-	return VfsCapData.size;
-}
-
-export function read_file_capabilities(from: Uint8Array): FileCapabilities {
-	const data = new VfsCapData(from.buffer, from.byteOffset);
-
-	return {
-		permitted: (BigInt(data.permitted_high) << 32n) | BigInt(data.permitted_low),
-		inheritable: (BigInt(data.inheritable_high) << 32n) | BigInt(data.inheritable_low),
-		effective: (data.magic_etc & vfsCapFlagsEffective) !== 0,
-	};
-}
+export type FileCapabilities = Pick<VfsCapData, 'permitted' | 'inheritable' | 'effective'>;
 
 /**
  * The terminal ioctls, from `<asm-generic/ioctls.h>`.
@@ -442,44 +445,28 @@ export class Fsxattr extends struct('fsxattr', {
 	nextents: t.uint32,
 	projid: t.uint32,
 	cowextsize: t.uint32,
-	pad: t.uint8(8),
+	pad: t.uint8(8).align(1),
 }) {}
 
-export interface FsxattrFields {
-	xflags: number;
-	extsize: number;
-	nextents: number;
-	projid: number;
-	cowextsize: number;
-}
-
-export function write_fsxattr(attr: Fsxattr, from: FsxattrFields): void {
-	attr.xflags = from.xflags;
-	attr.extsize = from.extsize;
-	attr.nextents = from.nextents;
-	attr.projid = from.projid;
-	attr.cowextsize = from.cowextsize;
-}
-
-export function read_fsxattr(attr: Fsxattr): FsxattrFields {
-	return { xflags: attr.xflags, extsize: attr.extsize, nextents: attr.nextents, projid: attr.projid, cowextsize: attr.cowextsize };
-}
+/** What an `FSGETXATTR` answers with, or an `FSSETXATTR` asks for, as an ioctl argument carries values rather than a struct */
+export type FsxattrFields = Pick<Fsxattr, 'xflags' | 'extsize' | 'nextents' | 'projid' | 'cowextsize'>;
 
 /** `struct fs_sysfs_path`: a length and the path under `/sys/fs` that goes with it */
 export class FsSysfsPath extends struct('fs_sysfs_path', {
 	len: t.uint8,
-	name: t.uint8(128),
-}) {}
+	name: t.uint8(128).align(1),
+}) {
+	/** The path, with {@link FsSysfsPath.len | `len`} kept in step */
+	get path(): string {
+		return decodeUTF8(this.name.subarray(0, this.len));
+	}
 
-export function write_fs_sysfs_path(into: FsSysfsPath, path: string): void {
-	const encoded = encodeUTF8(path).subarray(0, into.name.byteLength - 1);
-	into.name.fill(0);
-	into.name.set(encoded);
-	into.len = encoded.byteLength;
-}
-
-export function read_fs_sysfs_path(from: FsSysfsPath): string {
-	return decodeUTF8(from.name.subarray(0, from.len));
+	set path(value: string) {
+		const encoded = encodeUTF8(value).subarray(0, this.name.byteLength - 1);
+		this.name.fill(0);
+		this.name.set(encoded);
+		this.len = encoded.byteLength;
+	}
 }
 
 /** `struct winsize`, what `TIOCGWINSZ` fills in */
@@ -500,7 +487,7 @@ export class TermiosAbi extends struct('termios', {
 	cflag: t.uint32,
 	lflag: t.uint32,
 	line: t.uint8,
-	cc: t.uint8(19),
+	cc: t.uint8(19).align(1),
 }) {}
 
 // The terminal flags, from `<asm-generic/termbits.h>`. Only what means anything without hardware.
@@ -564,22 +551,11 @@ export const tcflush = {
 } as const;
 
 /** The line settings, in the shape everything on either side of the syscall uses them */
-export interface TermiosFields {
+export interface Termios {
 	iflag: number;
 	oflag: number;
 	lflag: number;
-	cc: number[];
-}
-
-export function write_termios(into: TermiosAbi, from: TermiosFields): void {
-	into.iflag = from.iflag;
-	into.oflag = from.oflag;
-	into.lflag = from.lflag;
-	into.cc.set(from.cc.slice(0, into.cc.length));
-}
-
-export function read_termios(from: TermiosAbi): TermiosFields {
-	return { iflag: from.iflag, oflag: from.oflag, lflag: from.lflag, cc: [...from.cc] };
+	cc: ArrayLike<number> & Iterable<number>;
 }
 
 /** `SEEK_*` */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { Errno } from 'kerium';
 import { decodeUTF8, encodeUTF8 } from 'utilium';
-import { capabilityVersion, CapData, capDataCount, CapHeader, Ioctl, read_capdata, read_termios, TermiosAbi, Winsize } from './abi.js';
+import { capabilityVersion, CapData, CapHeader, Ioctl, TermiosAbi, Winsize } from './abi.js';
 import type { Syscalls } from './abi.js';
 import { pending, returned, syscall_raw } from './base.js';
 import { environ, argv as get_argv, getpid } from './process.js';
@@ -70,10 +70,9 @@ function struct_at<T>(Type: { new (buffer: ArrayBufferLike, offset: number): T; 
 
 /** Put whatever the last syscall left in the region at a pointer, up to `limit` bytes */
 function give(ptr: number, limit: number = Infinity): number {
-	const region = returned();
-	const length = Math.min(region.byteLength, limit);
+	const length = Math.min(returned.byteLength, limit);
 	sync();
-	bytes.set(region.subarray(0, length), ptr);
+	bytes.set(returned.subarray(0, length), ptr);
 	return length;
 }
 
@@ -284,7 +283,7 @@ export const wali = {
 	SYS_getcwd: (ptr: number, size: number) => {
 		const value = syscall_raw('getcwd');
 		if (value < 0) return BigInt(value);
-		const cwd = returned();
+		const cwd = returned;
 		if (cwd.byteLength + 1 > size) return -BigInt(Errno.ERANGE);
 		sync();
 		bytes.set(cwd, ptr);
@@ -382,8 +381,7 @@ export const wali = {
 		if (result < 0) return BigInt(result);
 
 		if (previous) {
-			const region = returned();
-			const answer = new DataView(region.buffer, region.byteOffset);
+			const answer = new DataView(returned.buffer, returned.byteOffset);
 			write_timeval(previous, answer.getFloat64(8, true));
 			write_timeval(previous + 16, answer.getFloat64(0, true));
 		}
@@ -394,8 +392,7 @@ export const wali = {
 		const result = syscall_raw('setitimer', 0, seconds * 1000, 0);
 		if (result < 0) return BigInt(result);
 
-		const region = returned();
-		return BigInt(Math.ceil(new DataView(region.buffer, region.byteOffset).getFloat64(0, true) / 1000));
+		return BigInt(Math.ceil(new DataView(returned.buffer, returned.byteOffset).getFloat64(0, true) / 1000));
 	},
 
 	/**
@@ -433,7 +430,7 @@ export const wali = {
 		const head = struct_at(CapHeader, header);
 		if (head.version != capabilityVersion) return -BigInt(Errno.EINVAL);
 
-		const { effective, permitted, inheritable } = read_capdata(read_at(data, CapData.size * capDataCount));
+		const { effective, permitted, inheritable } = struct_at(CapData, data);
 		return sys('capset', head.pid, effective, permitted, inheritable);
 	},
 
@@ -590,11 +587,9 @@ function ioctl_argument(request: Ioctl, ptr: number): unknown {
 		case Ioctl.TCSETS:
 		case Ioctl.TCSETSW:
 		case Ioctl.TCSETSF:
-			return read_termios(struct_at(TermiosAbi, ptr));
-		case Ioctl.TIOCSWINSZ: {
-			const size = struct_at(Winsize, ptr);
-			return { rows: size.row, cols: size.col };
-		}
+			return { ...struct_at(TermiosAbi, ptr) };
+		case Ioctl.TIOCSWINSZ:
+			return { ...struct_at(Winsize, ptr) };
 		case Ioctl.TIOCSPGRP:
 			return view.getInt32(ptr, true);
 		default:
@@ -617,8 +612,7 @@ function pipe_fds(ptr: number, flags: number): bigint {
 	const value = syscall_raw('pipe', flags);
 	if (value < 0) return BigInt(value);
 
-	const region = returned();
-	const answer = new DataView(region.buffer, region.byteOffset);
+	const answer = new DataView(returned.buffer, returned.byteOffset);
 
 	sync();
 	view.setInt32(ptr, answer.getInt32(0, true), true);
@@ -643,8 +637,7 @@ function poll_fds(ptr: number, nfds: number, timeout: number): bigint {
 	const value = syscall_raw('poll', fds, timeout);
 	if (value < 0) return BigInt(value);
 
-	const region = returned();
-	const answer = new DataView(region.buffer, region.byteOffset);
+	const answer = new DataView(returned.buffer, returned.byteOffset);
 
 	sync();
 	for (let i = 0; i < nfds; i++) view.setUint16(ptr + i * 8 + 6, answer.getUint16(i * 2, true), true);
@@ -674,8 +667,7 @@ function select_fds(nfds: number, readfds: number, writefds: number, exceptfds: 
 	const value = syscall_raw('poll', fds, timeout);
 	if (value < 0) return BigInt(value);
 
-	const region = returned();
-	const answer = new DataView(region.buffer, region.byteOffset);
+	const answer = new DataView(returned.buffer, returned.byteOffset);
 
 	sync();
 	for (const set of sets) if (set) bytes.fill(0, set, set + Math.ceil(nfds / 8));

@@ -4,7 +4,7 @@ import { fs, type FSContext } from '@zenfs/core';
 import { O_RDONLY, X_OK } from '@zenfs/core/constants';
 import * as xattr from '@zenfs/core/vfs/xattr';
 import type { FileCapabilities } from '@zenfs/linux/uapi/abi';
-import { capabilityXattr, read_file_capabilities, VfsCapData, vfsCapRevision2, vfsCapRevisionMask } from '@zenfs/linux/uapi/abi';
+import { capabilityXattr, VfsCapData, vfsCapRevision2 } from '@zenfs/linux/uapi/abi';
 import { UV } from 'kerium';
 import { decodeASCII } from 'utilium';
 import { capabilities_on_exec } from '../capability.js';
@@ -135,9 +135,10 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 	try {
 		const value = xattr.getSync.call(proc.context, prm.filename, capabilityXattr, {}) as unknown as Uint8Array;
 		if (value.byteLength < VfsCapData.size) throw null;
+		const data = new VfsCapData(value.buffer, value.byteOffset);
 		// Revision 1 is 32 bits wide and long gone, so anything older than revision 2 is not read
-		if ((new VfsCapData(value.buffer, value.byteOffset).magic_etc & vfsCapRevisionMask) < vfsCapRevision2) throw null;
-		caps = read_file_capabilities(value);
+		if (data.revision < vfsCapRevision2) throw null;
+		caps = data;
 	} catch {
 		// this is fine
 	}
@@ -147,14 +148,13 @@ export async function execve(proc: Process, path: string, argv: string[] = [path
 	const interpreter = fmt.interpreter ? fs.realpathSync.call($, fmt.interpreter) : prm.filename;
 	fs.accessSync.call(proc.context, interpreter, X_OK);
 	const data = fs.readFileSync.call<FSContext, [string], Uint8Array>(proc.context, interpreter);
-	const source = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
 
 	proc.thread?.kill();
 
 	proc.thread = new Thread(proc);
 	if (proc.tty) proc.tty.foreground = proc;
 
-	await proc.thread.start(prm.filename, interpreter, source);
+	await proc.thread.start(prm.filename, interpreter, data);
 }
 
 /**

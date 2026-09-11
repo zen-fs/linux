@@ -6,9 +6,9 @@
  * turns these into `node:fs` lives above them.
  */
 import { decodeUTF8 } from 'utilium';
-import type { DirentFields, StatFields, StatFsFields, TermiosFields, Whence } from './abi.js';
-import { Ioctl, read_dirents, read_stat, read_statfs, read_termios, Stat, StatFs, TermiosAbi, Winsize } from './abi.js';
-import { returned, syscall, syscall_64 } from './base.js';
+import type { DirentFields, Termios, Whence } from './abi.js';
+import { Ioctl, read_dirents, Stat, StatFs, TermiosAbi, Winsize } from './abi.js';
+import { copyOut, returned, syscall, syscall_64 } from './base.js';
 
 export function open(path: string, flags: number, mode: number = 0o644): number {
 	return syscall('open', path, flags, mode);
@@ -20,8 +20,7 @@ export function close(fd: number): void {
 
 export function pipe(flags: number = 0): [read: number, write: number] {
 	syscall('pipe', flags);
-	const region = returned();
-	const ends = new DataView(region.buffer, region.byteOffset);
+	const ends = new DataView(returned.buffer, returned.byteOffset);
 	return [ends.getInt32(0, true), ends.getInt32(4, true)];
 }
 
@@ -32,7 +31,7 @@ export function pipe(flags: number = 0): [read: number, write: number] {
  */
 export function read(fd: number, buffer: Uint8Array, position: number = -1): number {
 	const length = syscall('read', fd, buffer.byteLength, position);
-	buffer.set(returned().subarray(0, length));
+	buffer.set(returned.subarray(0, length));
 	return length;
 }
 
@@ -73,65 +72,51 @@ export function ioctl(fd: number, request: number, arg?: unknown): number {
 }
 
 /** `tcgetattr`, i.e. `TCGETS` */
-export function tcgetattr(fd: number): TermiosFields {
+export function tcgetattr(fd: number): Termios {
 	syscall('ioctl', fd, Ioctl.TCGETS, undefined);
-	const region = returned();
-	return read_termios(new TermiosAbi(region.buffer, region.byteOffset));
+	return copyOut(TermiosAbi);
 }
 
 /** `tcsetattr`, i.e. `TCSETS`. Anything left out keeps the setting it had. */
-export function tcsetattr(fd: number, termios: Partial<TermiosFields>): void {
+export function tcsetattr(fd: number, termios: Partial<Termios>): void {
 	syscall('ioctl', fd, Ioctl.TCSETS, termios);
 }
 
 /** How big the terminal is, i.e. `TIOCGWINSZ` */
 export function winsize(fd: number): { row: number; col: number } {
 	syscall('ioctl', fd, Ioctl.TIOCGWINSZ, undefined);
-	const region = returned();
-	const size = new Winsize(region.buffer, region.byteOffset);
-	return { row: size.row, col: size.col };
+	return copyOut(Winsize);
 }
 
-/** What the last `stat` left in the region */
-function returned_stat(): StatFields {
-	const region = returned();
-	return read_stat(new Stat(region.buffer, region.byteOffset));
-}
-
-export function stat(path: string): StatFields {
+export function stat(path: string): Stat {
 	syscall('stat', path);
-	return returned_stat();
+	return copyOut(Stat);
 }
 
-export function lstat(path: string): StatFields {
+export function lstat(path: string): Stat {
 	syscall('lstat', path);
-	return returned_stat();
+	return copyOut(Stat);
 }
 
-export function fstat(fd: number): StatFields {
+export function fstat(fd: number): Stat {
 	syscall('fstat', fd);
-	return returned_stat();
+	return copyOut(Stat);
 }
 
-function returned_statfs(): StatFsFields {
-	const region = returned();
-	return read_statfs(new StatFs(region.buffer, region.byteOffset));
-}
-
-export function statfs(path: string): StatFsFields {
+export function statfs(path: string): StatFs {
 	syscall('statfs', path);
-	return returned_statfs();
+	return copyOut(StatFs);
 }
 
-export function fstatfs(fd: number): StatFsFields {
+export function fstatfs(fd: number): StatFs {
 	syscall('fstatfs', fd);
-	return returned_statfs();
+	return copyOut(StatFs);
 }
 
 /** Everything left in a directory, as `linux_dirent64` records the way `getdents64` gives them */
 export function getdents(fd: number): DirentFields[] {
 	syscall('getdents', fd);
-	return read_dirents(returned());
+	return read_dirents(returned);
 }
 
 export function mkdir(path: string, mode: number = 0o777): void {
@@ -160,17 +145,17 @@ export function symlink(target: string, path: string): void {
 
 export function readlink(path: string): string {
 	syscall('readlink', path);
-	return decodeUTF8(returned());
+	return decodeUTF8(returned);
 }
 
 export function realpath(path: string): string {
 	syscall('realpath', path);
-	return decodeUTF8(returned());
+	return decodeUTF8(returned);
 }
 
 export function getxattr(path: string, name: string, noFollow: boolean = false): Uint8Array {
 	syscall('getxattr', path, name, noFollow);
-	return returned().slice();
+	return returned.slice();
 }
 
 export function setxattr(path: string, name: string, value: Uint8Array, noFollow: boolean = false): void {
@@ -183,7 +168,7 @@ export function removexattr(path: string, name: string, noFollow: boolean = fals
 
 export function listxattr(path: string, noFollow: boolean = false): string[] {
 	syscall('listxattr', path, noFollow);
-	const names = decodeUTF8(returned());
+	const names = decodeUTF8(returned);
 	return names ? names.split('\0') : [];
 }
 
@@ -226,5 +211,5 @@ export function chdir(path: string): void {
 
 export function getcwd(): string {
 	syscall('getcwd');
-	return decodeUTF8(returned());
+	return decodeUTF8(returned);
 }

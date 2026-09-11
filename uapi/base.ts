@@ -4,7 +4,7 @@
  *
  * A sync syscall goes out over `postMessage` and the thread then blocks on the shared page, so the
  * arguments can be any values structured clone handles but the result cannot: it comes back as an
- * `i64`, with anything bigger left in the region. {@link returned} is that region.
+ * `i64`, with anything bigger left in the region. {@link returnedCopy} is that region.
  */
 import { Errno, UV } from 'kerium';
 import type { InitMessage, Syscalls } from './abi.js';
@@ -15,7 +15,7 @@ import { receive, send } from './port.js';
 let control: SyscallData | undefined;
 
 /** What the last syscall left behind */
-let region: Uint8Array<ArrayBufferLike> = new Uint8Array();
+export let returned: Uint8Array<ArrayBufferLike> = new Uint8Array();
 
 /** What the last syscall returned, kept whole since a `number` can't hold every `i64` exactly */
 let value = 0n;
@@ -46,7 +46,7 @@ receive(message => {
 			const waiter = waiters.get(message.id);
 			if (!waiter) return;
 			waiters.delete(message.id);
-			region = message.region ?? new Uint8Array();
+			returned = message.region ?? new Uint8Array();
 			value = BigInt(message.value);
 			waiter.resolve(message.value);
 			break;
@@ -108,7 +108,7 @@ export function syscall_raw<K extends keyof Syscalls>(name: K, ...args: Paramete
 	Atomics.wait(control.status, 0, SyscallStatus.Pending);
 
 	value = control.value;
-	region = new Uint8Array(control.buffer, regionOffset, control.length);
+	returned = new Uint8Array(control.buffer, regionOffset, control.length);
 
 	// A handler can make syscalls of its own, so nothing may be read out of the page after this
 	const pending = control.signals;
@@ -159,12 +159,9 @@ export function pending(): number {
 	return control?.signals ?? 0;
 }
 
-/**
- * What the last syscall left in the region, e.g. the bytes a `read` moved or the `struct stat` a
- * `stat` filled. It is only good until the next syscall.
- */
-export function returned(): Uint8Array {
-	return region;
+export function copyOut<const T>(struct: new (buffer: ArrayBuffer, byteOffset: number) => T): T {
+	const copy = returned.slice();
+	return new struct(copy.buffer, copy.byteOffset);
 }
 
 /** kerium's `Errno` is a numeric enum, so the name a code goes with is a lookup away */

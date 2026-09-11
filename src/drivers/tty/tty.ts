@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { IoctlContext, IoctlOps } from '@zenfs/core/internal/ioctl';
+import type { Termios } from '@zenfs/linux/uapi/abi';
 import { iflags, lflags, oflags, tcflush } from '@zenfs/linux/uapi/abi';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
@@ -14,7 +15,6 @@ import { Signal } from '../../signal.js';
 import { WaitQueue } from '../../wait.js';
 import { Class } from '../base/class.js';
 import { LineDiscipline } from './n_tty.js';
-import type { Termios } from './termios.js';
 import { default_termios } from './termios.js';
 
 /** What a tty is driving, i.e. `enum tty_driver_type` */

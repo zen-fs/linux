@@ -8,26 +8,10 @@ import { dupFD, fromFD, toFD } from '@zenfs/core/vfs/file';
 import { ioctlSync } from '@zenfs/core/vfs/ioctl';
 import * as vfs from '@zenfs/core/vfs/sync';
 import * as xattr from '@zenfs/core/vfs/xattr';
-import type { FsxattrFields } from '@zenfs/linux/uapi/abi';
-import {
-	capabilityXattr,
-	FsSysfsPath,
-	Fsxattr,
-	Ioctl,
-	Stat,
-	StatFs,
-	TermiosAbi,
-	Whence,
-	Winsize,
-	write_dirents,
-	write_fs_sysfs_path,
-	write_fsxattr,
-	write_stat,
-	write_statfs,
-	write_termios,
-} from '@zenfs/linux/uapi/abi';
+import type { FsxattrFields, StatFields, StatFsFields, Termios } from '@zenfs/linux/uapi/abi';
+import { capabilityXattr, FsSysfsPath, Fsxattr, Ioctl, Stat, StatFs, TermiosAbi, Whence, Winsize, write_dirents } from '@zenfs/linux/uapi/abi';
 import { Cap, require_capable } from '../capability.js';
-import type { Termios, WinSize } from '../drivers/tty/index.js';
+import type { WinSize } from '../drivers/tty/index.js';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
 import type { Process } from '../process.js';
@@ -43,10 +27,9 @@ function give_stat(proc: Process, inode: InodeLike): number {
 	const { region } = thread_of(proc);
 	region.fill(0, 0, Stat.size);
 
-	const stat = new Stat(region.buffer, region.byteOffset);
-	write_stat(stat, {
-		dev: 0,
-		rdev: 0,
+	Object.assign(new Stat(region.buffer, region.byteOffset), {
+		dev: 0n,
+		rdev: inode.rdev,
 		blksize: 4096,
 		blocks: Math.ceil(inode.size / 512),
 		ino: inode.ino,
@@ -59,7 +42,7 @@ function give_stat(proc: Process, inode: InodeLike): number {
 		mtimeMs: inode.mtimeMs,
 		ctimeMs: inode.ctimeMs,
 		birthtimeMs: inode.birthtimeMs,
-	});
+	} satisfies StatFields);
 
 	return thread_of(proc).filled(Stat.size);
 }
@@ -173,17 +156,17 @@ const ioctl_answers: Record<number, (into: Uint8Array, value: never) => number> 
 	},
 	[Ioctl.TCGETS]: (into, value: Termios) => {
 		into.fill(0, 0, TermiosAbi.size);
-		write_termios(new TermiosAbi(into.buffer, into.byteOffset), value);
+		Object.assign(new TermiosAbi(into.buffer, into.byteOffset), value);
 		return TermiosAbi.size;
 	},
 	[Ioctl.FSGETXATTR]: (into, value: FsxattrFields) => {
 		into.fill(0, 0, Fsxattr.size);
-		write_fsxattr(new Fsxattr(into.buffer, into.byteOffset), value);
+		Object.assign(new Fsxattr(into.buffer, into.byteOffset), value);
 		return Fsxattr.size;
 	},
 	[Ioctl.GETFSSYSFSPATH]: (into, value: string) => {
 		into.fill(0, 0, FsSysfsPath.size);
-		write_fs_sysfs_path(new FsSysfsPath(into.buffer, into.byteOffset), value);
+		new FsSysfsPath(into.buffer, into.byteOffset).path = value;
 		return FsSysfsPath.size;
 	},
 };
@@ -258,7 +241,17 @@ function give_statfs(proc: Process, path: string): number {
 
 	const { region } = thread_of(proc);
 	region.fill(0, 0, StatFs.size);
-	write_statfs(new StatFs(region.buffer, region.byteOffset), { type, bsize, blocks, bfree, bavail, files, ffree, frsize, namelen: nameMax });
+	Object.assign(new StatFs(region.buffer, region.byteOffset), {
+		type,
+		bsize,
+		blocks,
+		bfree,
+		bavail,
+		files,
+		ffree,
+		frsize,
+		namelen: nameMax,
+	} satisfies StatFsFields);
 
 	return thread_of(proc).filled(StatFs.size);
 }

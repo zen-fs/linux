@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The process and signal syscalls */
-import { CapData, capDataCount, UtsName, write_capdata, write_utsname } from '@zenfs/linux/uapi/abi';
+import { CapData, UtsName } from '@zenfs/linux/uapi/abi';
 import { withErrno } from 'kerium';
 import { Cap, cap_set, require_capable } from '../capability.js';
 import { execve, spawn } from '../fs/exec.js';
@@ -69,7 +69,7 @@ define_syscall('uname', proc => {
 	const { region } = thread_of(proc);
 	region.fill(0, 0, UtsName.size);
 
-	write_utsname(new UtsName(region.buffer, region.byteOffset), init_uts);
+	Object.assign(new UtsName(region.buffer, region.byteOffset), init_uts);
 
 	return thread_of(proc).filled(UtsName.size);
 });
@@ -95,12 +95,12 @@ function target_of(proc: Process, pid: number): Process {
 
 define_syscall('capget', (proc, pid) => {
 	const { region } = thread_of(proc);
-	const size = CapData.size * capDataCount;
-	region.fill(0, 0, size);
+	region.fill(0, 0, CapData.size);
 
-	write_capdata(region, target_of(proc, pid).caps);
+	const { effective, permitted, inheritable } = target_of(proc, pid).caps;
+	Object.assign(new CapData(region.buffer, region.byteOffset), { effective, permitted, inheritable });
 
-	return thread_of(proc).filled(size);
+	return thread_of(proc).filled(CapData.size);
 });
 
 define_syscall('capset', (proc, pid, effective, permitted, inheritable) => {
