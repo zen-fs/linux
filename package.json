@@ -54,8 +54,10 @@
 		"typescript-eslint": "^8.58.0"
 	},
 	"peerDependencies": {
+		"@types/node": "^26.0.0",
 		"@zenfs/core": "^2.7.1",
 		"kerium": "^1.4.0",
+		"memium": "^1.0.2",
 		"utilium": "^3.0.0"
 	},
 	"keywords": [
