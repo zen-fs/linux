@@ -272,6 +272,14 @@ export interface UtsNameFields {
 	domainname: string;
 }
 
+export function write_utsname(uts: UtsName, from: UtsNameFields): void {
+	for (const [key, value] of Object.entries(from) as [keyof UtsNameFields, string][]) {
+		const field = uts[key];
+		field.fill(0);
+		field.set(encodeUTF8(value).subarray(0, field.byteLength - 1));
+	}
+}
+
 export function read_utsname(uts: UtsName): UtsNameFields {
 	const name = (field: Uint8Array) => {
 		const end = field.indexOf(0);
@@ -503,6 +511,8 @@ export interface Syscalls {
 	setitimer(which: number, value: number, interval: number): number;
 	// The system
 	uname(): number;
+	sethostname(name: string): number;
+	setdomainname(name: string): number;
 }
 
 /** What the kernel sends a thread once, before anything else */

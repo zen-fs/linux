@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import { Errno } from 'kerium';
-import { encodeUTF8 } from 'utilium';
+import { decodeUTF8, encodeUTF8 } from 'utilium';
 import { Ioctl, read_termios, TermiosAbi, Winsize } from './abi.js';
 import type { Syscalls } from './abi.js';
 import { pending, returned, syscall_raw } from './base.js';
@@ -409,12 +409,9 @@ export const wali = {
 	},
 	SYS_sched_yield: () => 0n,
 
-	SYS_uname: (ptr: number) => {
-		const value = syscall_raw('uname');
-		if (value < 0) return BigInt(value);
-		give(ptr);
-		return 0n;
-	},
+	SYS_uname: (ptr: number) => filled_at('uname', ptr),
+	SYS_sethostname: (ptr: number, length: number) => sys('sethostname', decodeUTF8(read_at(ptr, length))),
+	SYS_setdomainname: (ptr: number, length: number) => sys('setdomainname', decodeUTF8(read_at(ptr, length))),
 
 	SYS_clock_gettime: (_clock: number, ptr: number) => timespec(ptr, Date.now()),
 	SYS_gettimeofday: (ptr: number) => {

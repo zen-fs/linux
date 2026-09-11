@@ -8,6 +8,7 @@ export * from './process.js';
 export * from './resources.js';
 export * from './signal.js';
 export * from './thread.js';
+export * from './uts.js';
 export * from './wait.js';
 
 export * from './syscall/table.js';

@@ -78,3 +78,11 @@ export function uname(): UtsNameFields {
 	const region = returned();
 	return read_utsname(new UtsName(region.buffer, region.byteOffset));
 }
+
+export function sethostname(name: string): void {
+	syscall('sethostname', name);
+}
+
+export function setdomainname(name: string): void {
+	syscall('setdomainname', name);
+}

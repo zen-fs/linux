@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /** The process and signal syscalls */
-import { _version } from '@zenfs/core';
-import { UtsName } from '@zenfs/linux/uapi/abi';
+import { UtsName, write_utsname } from '@zenfs/linux/uapi/abi';
 import { withErrno } from 'kerium';
-import { encodeUTF8 } from 'utilium';
-import $pkg from '../../package.json' with { type: 'json' };
 import { execve, spawn } from '../fs/exec.js';
 import type { Process } from '../process.js';
 import { processes } from '../process.js';
 import { signal_of } from '../signal.js';
+import { init_uts, set_domainname, set_hostname } from '../uts.js';
 import { define_syscall, thread_of } from './table.js';
 
 define_syscall('getpid', proc => proc.pid);
@@ -70,12 +68,23 @@ define_syscall('uname', proc => {
 	const { region } = thread_of(proc);
 	region.fill(0, 0, UtsName.size);
 
-	const uts = new UtsName(region.buffer, region.byteOffset);
-	uts.sysname.set(encodeUTF8('Linux'));
-	uts.nodename.set(encodeUTF8('zenfs'));
-	uts.release.set(encodeUTF8($pkg.version));
-	uts.version.set(encodeUTF8(`@zenfs/linux (core ${_version})`));
-	uts.machine.set(encodeUTF8('wasm64'));
+	write_utsname(new UtsName(region.buffer, region.byteOffset), init_uts);
 
 	return thread_of(proc).filled(UtsName.size);
+});
+
+/** What naming the system takes, standing in for `CAP_SYS_ADMIN` until there are capabilities */
+// @todo add capabilities
+function admin(proc: Process): void {
+	if (proc.context.credentials.euid !== 0) throw withErrno('EPERM');
+}
+
+define_syscall('sethostname', (proc, name) => {
+	admin(proc);
+	set_hostname(name);
+});
+
+define_syscall('setdomainname', (proc, name) => {
+	admin(proc);
+	set_domainname(name);
 });

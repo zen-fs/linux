@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { FSContext } from '@zenfs/core';
-import { _version, boundContexts, defaultContext } from '@zenfs/core';
+import { boundContexts, defaultContext } from '@zenfs/core';
 import { withErrno } from 'kerium';
-import $pkg from '../../package.json' with { type: 'json' };
 import { initConfig } from '../init.js';
 import { modules } from '../module.js';
 import { current, processes } from '../process.js';
+import { init_uts, set_domainname, set_hostname } from '../uts.js';
 import * as block_dev from './block_dev.js';
 import { sectorSize } from './block_dev.js';
 import * as char_dev from './char_dev.js';
@@ -269,7 +269,16 @@ export const proc_root: ProcRoot = new ProcRoot({
 	mounts: file(() => show_mounts(self())),
 	partitions: file(show_partitions),
 	uptime: file(show_uptime),
-	version: file(() => `ZenFS (@zenfs/linux) version ${$pkg.version} (core ${_version})\n`),
+	version: file(() => `${init_uts.sysname} version ${init_uts.release} (${init_uts.version})\n`),
+	sys: new ProcDir({
+		kernel: new ProcDir({
+			ostype: file(() => init_uts.sysname + '\n'),
+			osrelease: file(() => init_uts.release + '\n'),
+			version: file(() => init_uts.version + '\n'),
+			hostname: { mode: 0o644, show: () => init_uts.nodename + '\n', store: value => set_hostname(value.trim()) },
+			domainname: { mode: 0o644, show: () => init_uts.domainname + '\n', store: value => set_domainname(value.trim()) },
+		}),
+	}),
 });
 
 /**
