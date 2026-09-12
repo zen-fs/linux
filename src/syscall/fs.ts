@@ -28,7 +28,7 @@ function give_stat(proc: Process, inode: InodeLike): number {
 	region.fill(0, 0, Stat.size);
 
 	Object.assign(new Stat(region.buffer, region.byteOffset), {
-		dev: 0n,
+		dev: 0,
 		rdev: inode.rdev,
 		blksize: 4096,
 		blocks: Math.ceil(inode.size / 512),
