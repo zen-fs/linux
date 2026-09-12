@@ -8,18 +8,18 @@ import { dupFD, fromFD, toFD } from '@zenfs/core/vfs/file';
 import { ioctlSync } from '@zenfs/core/vfs/ioctl';
 import * as vfs from '@zenfs/core/vfs/sync';
 import * as xattr from '@zenfs/core/vfs/xattr';
-import type { FsxattrFields, StatFields, StatFsFields, Termios } from '@zenfs/linux/uapi/abi';
+import type { FsxattrFields, StatFsFields, Termios } from '@zenfs/linux/uapi/abi';
 import { capabilityXattr, FsSysfsPath, Fsxattr, Ioctl, Stat, StatFs, TermiosAbi, Whence, Winsize, write_dirents } from '@zenfs/linux/uapi/abi';
-import { Cap, require_capable } from '../capability.js';
-import type { WinSize } from '../drivers/tty/index.js';
 import { withErrno } from 'kerium';
 import { encodeUTF8 } from 'utilium';
-import type { Process } from '../process.js';
-import { processes } from '../process.js';
-import { wait_event, wait_event_any } from '../wait.js';
+import { Cap, require_capable } from '../capability.js';
+import type { WinSize } from '../drivers/tty/index.js';
 import type { DeviceFileWithOps } from '../fs/devtmpfs.js';
 import { DevTmpFS, EPOLLIN, EPOLLOUT } from '../fs/devtmpfs.js';
 import { create_pipe, PipeFS } from '../fs/pipe.js';
+import type { Process } from '../process.js';
+import { processes } from '../process.js';
+import { wait_event, wait_event_any } from '../wait.js';
 import { define_syscall, thread_of } from './table.js';
 
 /** Leave a `struct stat` in the region, which is where `stat` and friends put their answer */
@@ -42,7 +42,7 @@ function give_stat(proc: Process, inode: InodeLike): number {
 		mtimeMs: inode.mtimeMs,
 		ctimeMs: inode.ctimeMs,
 		birthtimeMs: inode.birthtimeMs,
-	} satisfies StatFields);
+	});
 
 	return thread_of(proc).filled(Stat.size);
 }
