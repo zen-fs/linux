@@ -1,3 +1,4 @@
+/* eslint-disable no-debugger */
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import type { Syscalls } from '@zenfs/linux/uapi/abi';
 import { Errno, withErrno } from 'kerium';
@@ -32,6 +33,25 @@ export function define_syscall<K extends keyof Syscalls>(name: K, handler: Sysca
 	syscalls.set(name, handler);
 }
 
+const stackLine = /(?:([^@]*)@|([^\s]+)\s+at\s+)https?:\/\/[\w\d.]+(?::\d{1,5})?\/\w+\.js:(\d+):(\d+)/im;
+
+function formatSyscallBug(err: unknown) {
+	if (!err || typeof err !== 'object' || !(err instanceof Error) || !err.stack) return String(err);
+
+	let formatted = '';
+	for (const line of err.stack.split('\n')) {
+		const [matches, sym, lineNo, colNo] = stackLine.exec(line.trim()) || [];
+
+		if (matches) {
+			formatted += `\n    ${sym || '<unknown>'}`;
+			continue;
+		}
+
+		formatted += `\n    ${line}`;
+	}
+	return formatted;
+}
+
 /**
  * Run a syscall on behalf of a process.
  * @returns what it returned, with a negative value being `-errno` the way a Linux syscall returns
@@ -51,7 +71,8 @@ export async function dispatch(proc: Process, name: keyof Syscalls, args: unknow
 		if (typeof errno == 'number') return -errno;
 
 		// Nothing else should come out of a handler, so it is a kernel bug rather than a failed call
-		err(`syscall ${name}: ${String(e)}`);
+		err(`syscall ${name}: ${formatSyscallBug(e)}`);
+		debugger;
 		return -Errno.EIO;
 	} finally {
 		set_current(previous);
