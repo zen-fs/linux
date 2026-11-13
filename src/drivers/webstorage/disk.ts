@@ -84,7 +84,7 @@ export class WebStorageDisk extends GenDisk {
 		try {
 			this.storage.setItem(key, decodeASCII(data));
 		} catch (e: any) {
-			throw e instanceof Error && (e.name == 'QuotaExceededError' || e.name == 'NS_ERROR_DOM_QUOTA_REACHED')
+			throw Error.isError(e) && (e.name == 'QuotaExceededError' || e.name == 'NS_ERROR_DOM_QUOTA_REACHED')
 				? withErrno('ENOSPC', `${this.name} is full`)
 				: withErrno('EIO', `${this.name}: ${e}`);
 		}

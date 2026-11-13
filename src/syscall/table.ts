@@ -36,7 +36,7 @@ export function define_syscall<K extends keyof Syscalls>(name: K, handler: Sysca
 const stackLine = /(?:([^@]*)@|([^\s]+)\s+at\s+)https?:\/\/[\w\d.]+(?::\d{1,5})?\/\w+\.js:(\d+):(\d+)/im;
 
 function formatSyscallBug(err: unknown) {
-	if (!err || typeof err !== 'object' || !(err instanceof Error) || !err.stack) return String(err);
+	if (!err || typeof err !== 'object' || !Error.isError(err) || !err.stack) return String(err);
 
 	let formatted = '';
 	for (const line of err.stack.split('\n')) {
